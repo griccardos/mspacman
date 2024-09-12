@@ -5,5 +5,4 @@ edition = "2021"
 
 [dependencies]
 crossterm = "0.28.1"
-easier = "0.2.0"
 ratatui = "0.28.1"
