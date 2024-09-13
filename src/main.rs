@@ -1,43 +1,15 @@
+pub mod structs;
+
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use easier::prelude::*;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style, Stylize},
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState},
+    widgets::{Block, Borders, Cell, Paragraph, Row, Table},
     DefaultTerminal, Frame,
 };
-use std::{error::Error, isize, process::Command};
-
-#[derive(Debug, Default)]
-struct AppState {
-    packs: Vec<Package>,
-    filtered: Vec<Package>,
-    centre_table_state: TableState,
-    left_table_state: TableState,
-    right_table_state: TableState,
-    focus: Focus,
-    sort: Sort,
-    prev: Vec<String>,
-    only_expl: bool,
-    show_info: bool,
-    message: String,
-    selected: Vec<String>,
-}
-#[derive(Debug, Default, PartialEq, Clone, Copy)]
-enum Focus {
-    Left,
-    #[default]
-    Centre,
-    Right,
-}
-
-#[derive(Debug, Default)]
-enum Sort {
-    #[default]
-    Name,
-    NameDesc,
-    Dependents,
-    DependentsDesc,
-}
+use std::{collections::HashMap, error::Error, isize, process::Command};
+use structs::{AppState, Focus, Package, Reason, Sort};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !pacman_exists() {
@@ -50,6 +22,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         filtered: packs.clone(),
         packs,
         show_info: true,
+        sort_by: (1, Sort::Asc),
+        hide_columns: HashMap::from_iter([(2, false), (3, false), (4, false), (5, false)]),
         ..Default::default()
     };
     state.left_table_state.select(Some(0));
@@ -57,8 +31,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     state.right_table_state.select(Some(0));
 
     let mut terminal = ratatui::init();
-    terminal.clear().unwrap();
-    let appresult = run(terminal, state);
+    terminal.clear()?;
+    let appresult = run(&mut terminal, state);
     ratatui::restore();
 
     match appresult {
@@ -68,10 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn run(
-    mut terminal: DefaultTerminal,
-    mut state: AppState,
-) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+fn run(terminal: &mut DefaultTerminal, mut state: AppState) -> Result<Vec<String>, Box<dyn Error>> {
     loop {
         terminal.draw(|f| {
             let info = if state.show_info { 5 } else { 0 };
@@ -86,7 +57,7 @@ fn run(
                 .split(f.area());
             let body = Layout::default()
                 .direction(Direction::Horizontal)
-                .constraints(Constraint::from_percentages([25, 45, 25]))
+                .constraints(Constraint::from_percentages([20, 60, 20]))
                 .split(body_status[0]);
 
             draw_dependencies(&mut state, f, body[0]).unwrap();
@@ -114,19 +85,22 @@ fn handle_event(state: &mut AppState) -> Result<bool, Box<dyn Error>> {
                         return Ok(true);
                     }
                 }
-                KeyCode::Char('s') => cycle_sort(state),
+                KeyCode::Char(val) if val >= '1' && val <= '5' => {
+                    let val = val.to_digit(10).unwrap() as usize;
+                    if key.modifiers.contains(KeyModifiers::ALT) {
+                        hide_column(state, val)
+                    } else {
+                        sort_column(state, val)
+                    }
+                }
+
                 KeyCode::Char('e') => {
                     state.only_expl = !state.only_expl;
-                    if state.only_expl {
-                        state.filtered = state
-                            .packs
-                            .iter()
-                            .filter(|p| p.reason == Reason::Explicit)
-                            .cloned()
-                            .collect();
-                    } else {
-                        state.filtered = state.packs.clone()
-                    };
+                    update_filter(state);
+                }
+                KeyCode::Char('f') => {
+                    state.only_foreign = !state.only_foreign;
+                    update_filter(state);
                 }
                 KeyCode::Char('i') => state.show_info = !state.show_info,
                 KeyCode::Esc => return Ok(true),
@@ -150,6 +124,86 @@ fn handle_event(state: &mut AppState) -> Result<bool, Box<dyn Error>> {
         }
     }
     Ok(false)
+}
+
+fn hide_column(state: &mut AppState, arg: usize) {
+    state.hide_columns.entry(arg).and_modify(|a| *a = !*a);
+}
+fn sort_column(state: &mut AppState, arg: usize) {
+    if state.sort_by.0 == arg {
+        if state.sort_by.1 == Sort::Asc {
+            state.sort_by.1 = Sort::Desc;
+        } else {
+            state.sort_by.1 = Sort::Asc;
+        }
+    } else {
+        state.sort_by.0 = arg;
+        state.sort_by.1 = Sort::Asc;
+    }
+    let sort_col = state.sort_by.0;
+    let sort_dir = state.sort_by.1;
+
+    //always sort by name first
+    state.filtered.sort_by(|a, b| a.name.cmp(&b.name));
+    match sort_col {
+        1 => {
+            if sort_dir == Sort::Asc {
+                state.filtered.sort_by(|a, b| a.name.cmp(&b.name));
+            } else {
+                state.filtered.sort_by(|a, b| b.name.cmp(&a.name));
+            }
+        }
+        2 => {
+            if sort_dir == Sort::Asc {
+                state
+                    .filtered
+                    .sort_by(|a, b| a.reason.partial_cmp(&b.reason).unwrap());
+            } else {
+                state
+                    .filtered
+                    .sort_by(|a, b| b.reason.partial_cmp(&a.reason).unwrap());
+            }
+        }
+        3 => {
+            if sort_dir == Sort::Asc {
+                state
+                    .filtered
+                    .sort_by(|a, b| a.dependents.len().cmp(&b.dependents.len()));
+            } else {
+                state
+                    .filtered
+                    .sort_by(|a, b| b.dependents.len().cmp(&a.dependents.len()));
+            }
+        }
+        4 => {
+            if sort_dir == Sort::Asc {
+                state.filtered.sort_by(|a, b| a.validated.cmp(&b.validated));
+            } else {
+                state.filtered.sort_by(|a, b| b.validated.cmp(&a.validated));
+            }
+        }
+        5 => {
+            if sort_dir == Sort::Asc {
+                state.filtered.sort_by(|a, b| a.installed.cmp(&b.installed));
+            } else {
+                state.filtered.sort_by(|a, b| b.installed.cmp(&a.installed));
+            }
+        }
+
+        _ => {}
+    }
+}
+
+fn update_filter(state: &mut AppState) {
+    state.filtered = state
+        .packs
+        .iter()
+        .filter(|p| {
+            ((state.only_expl && p.reason == Reason::Explicit) || !state.only_expl)
+                && ((state.only_foreign && !p.validated) || !state.only_foreign)
+        })
+        .cloned()
+        .collect();
 }
 
 fn handle_select(state: &mut AppState) {
@@ -226,27 +280,6 @@ fn cycle_focus(state: &mut AppState, arg: i32) {
     }
 }
 
-fn cycle_sort(state: &mut AppState) {
-    match state.sort {
-        Sort::Name => state.sort = Sort::NameDesc,
-        Sort::NameDesc => state.sort = Sort::Dependents,
-        Sort::Dependents => state.sort = Sort::DependentsDesc,
-        Sort::DependentsDesc => state.sort = Sort::Name,
-    }
-    match state.sort {
-        Sort::Name => state.filtered.sort_by(|a, b| a.name.cmp(&b.name)),
-        Sort::NameDesc => state.filtered.sort_by(|a, b| b.name.cmp(&a.name)),
-        Sort::Dependents => {
-            state.filtered.sort_by(|a, b| a.name.cmp(&b.name)); //first sort by name
-            state
-                .filtered
-                .sort_by(|a, b| a.dependents.len().cmp(&b.dependents.len()));
-        }
-        Sort::DependentsDesc => state
-            .filtered
-            .sort_by(|a, b| b.dependents.len().cmp(&a.dependents.len())),
-    }
-}
 fn draw_info(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Box<dyn Error>> {
     //info
     let pack = current_pack(&state);
@@ -266,14 +299,26 @@ fn draw_info(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Box<
     Ok(())
 }
 fn draw_status(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Box<dyn Error>> {
-    let mut text = vec!["q: Quit", "i: Info", "e: Expl", "SPC: Select"];
+    let mut text = vec![
+        "q:Quit",
+        "i:Info",
+        "d:Date",
+        "e:Expl",
+        "f:Foreign",
+        "SPC:Select",
+        "Alt+[2-5]:Minimize",
+    ];
+    let sname = match state.sort_by.0 {
+        1 => "Name",
+        2 => "Reason",
+        3 => "Required By",
+        4 => "Foreign",
+        5 => "Installed",
+        _ => "",
+    };
+    let sname = format!("[1-5]:Sort [{sname} {:?}]", state.sort_by.1);
+    text.push(&sname);
 
-    match state.sort {
-        Sort::Name => text.push("s: Sort [Name]"),
-        Sort::NameDesc => text.push("s: Sort [Name Desc]"),
-        Sort::Dependents => text.push("s: Sort [Dependents]"),
-        Sort::DependentsDesc => text.push("s: Sort [Dependents Desc]"),
-    }
     if state.prev.len() > 0 {
         text.push("BSP: Back");
     }
@@ -335,11 +380,15 @@ fn draw_centre(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Bo
         .filtered
         .iter()
         .map(|pack| {
-            let mut row = Row::from_iter([
+            let data = vec![
                 pack.name.clone(),
                 format!("{:?}", pack.reason),
                 pack.dependents.len().to_string(),
-            ]);
+                format!("{}", if pack.validated { "" } else { "X" }),
+                pack.installed.clone(),
+            ];
+
+            let mut row = Row::from_iter(data);
             let mut style = Style::default();
             if pack.reason == Reason::Explicit {
                 style = style.fg(Color::Green);
@@ -358,19 +407,42 @@ fn draw_centre(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Bo
     } else {
         Style::default().bg(Color::Gray).fg(Color::Black)
     };
+    let head = vec!["Name", "Reason", "ReqBy", "Foreign", "Installed"];
 
-    let table = Table::new(rows, Constraint::from_percentages([65, 25, 10]))
+    let mut widths = vec![
+        Constraint::Percentage(50),
+        Constraint::Percentage(15),
+        Constraint::Min(5),
+        Constraint::Min(3),
+        Constraint::Length(19),
+    ];
+
+    for (i, c) in widths.iter_mut().enumerate() {
+        if let Some(v) = state.hide_columns.get(&(i + 1)) {
+            if *v {
+                *c = Constraint::Length(1);
+            }
+        }
+    }
+
+    let table = Table::new(rows, widths)
         .header(
-            ["Name", "Reason", "Req"]
-                .into_iter()
+            head.into_iter()
                 .map(Cell::from)
                 .collect::<Row>()
                 .style(Style::default().underlined().bold()),
         )
         .highlight_style(style);
     let count = state.filtered.len();
+    let local = state.filtered.iter().filter(|p| p.validated).count();
+    let foreign = count - local;
+    let extra = if foreign > 0 {
+        format!(" ({local} pacman, {foreign} foreign)")
+    } else {
+        "".to_string()
+    };
     let block = Block::default()
-        .title(format!("Installed {count} "))
+        .title(format!("Installed {count}{extra}"))
         .borders(Borders::all());
     let table = table.block(block);
     f.render_stateful_widget(&table, rect, &mut state.centre_table_state);
@@ -439,24 +511,6 @@ fn draw_dependents(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<()
 fn pacman_exists() -> bool {
     Command::new("pacman").output().is_ok()
 }
-#[derive(Debug, Default, Clone)]
-struct Package {
-    name: String,
-    dependents: Vec<String>,
-    dependencies: Vec<String>,
-    reason: Reason,
-    //info
-    version: String,
-    installed: String,
-    description: String,
-}
-#[derive(Debug, Clone, Default, PartialEq)]
-enum Reason {
-    #[default]
-    Dependency,
-    Explicit,
-    Other(String),
-}
 
 fn get_packs() -> Result<Vec<Package>, Box<dyn std::error::Error>> {
     let output = Command::new("pacman").arg("-Qi").output()?;
@@ -504,11 +558,20 @@ fn get_packs() -> Result<Vec<Package>, Box<dyn std::error::Error>> {
                     _ => Reason::Other(value.to_string()),
                 }
             }
-            "Install Date" => pack.installed = value.to_string(),
+            "Install Date" => pack.installed = to_date(value),
             "Description" => pack.description = value.to_string(),
+            "Validated By" => pack.validated = value == "Signature",
             _ => {}
         }
     }
     packs.push(pack);
     Ok(packs)
+}
+
+fn to_date(value: &str) -> String {
+    //get rid of the timezone
+    let value = value.rsplit_once(' ').unwrap().0;
+    let time = jiff::fmt::strtime::parse("%a %d %b %Y %I:%M:%S %p", value).unwrap();
+    time.to_datetime().unwrap().to_string().replace("T", " ")
+    //time.to_string("%Y-%m-%d %H:%M:%S").unwrap()
 }
