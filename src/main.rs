@@ -20,6 +20,7 @@ struct AppState {
     only_expl: bool,
     show_info: bool,
     message: String,
+    selected: Vec<String>,
 }
 #[derive(Debug, Default, PartialEq, Clone, Copy)]
 enum Focus {
@@ -60,13 +61,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let appresult = run(terminal, state);
     ratatui::restore();
 
-    appresult
+    match appresult {
+        Ok(selected) => selected.iter().for_each(|f| println!("{f}")),
+        Err(e) => eprintln!("{e}"),
+    }
+    Ok(())
 }
 
 fn run(
     mut terminal: DefaultTerminal,
     mut state: AppState,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     loop {
         terminal.draw(|f| {
             let info = if state.show_info { 5 } else { 0 };
@@ -95,7 +100,7 @@ fn run(
             break;
         }
     }
-    Ok(())
+    Ok(state.selected)
 }
 
 fn handle_event(state: &mut AppState) -> Result<bool, Box<dyn Error>> {
@@ -105,6 +110,7 @@ fn handle_event(state: &mut AppState) -> Result<bool, Box<dyn Error>> {
                 KeyCode::Char('q') => return Ok(true),
                 KeyCode::Char('c') => {
                     if key.modifiers.contains(KeyModifiers::CONTROL) {
+                        state.selected.clear();
                         return Ok(true);
                     }
                 }
@@ -133,6 +139,7 @@ fn handle_event(state: &mut AppState) -> Result<bool, Box<dyn Error>> {
                 KeyCode::Left => cycle_focus(state, -1),
                 KeyCode::Right => cycle_focus(state, 1),
                 KeyCode::Enter => handle_enter(state),
+                KeyCode::Char(' ') => handle_select(state),
                 KeyCode::Backspace => {
                     if let Some(prev) = state.prev.pop() {
                         goto_package(state, &prev);
@@ -143,6 +150,19 @@ fn handle_event(state: &mut AppState) -> Result<bool, Box<dyn Error>> {
         }
     }
     Ok(false)
+}
+
+fn handle_select(state: &mut AppState) {
+    if state.focus != Focus::Centre {
+        return;
+    }
+    let name = current_pack(&state).name.clone();
+
+    if state.selected.contains(&name) {
+        state.selected.retain(|p| p != &name);
+    } else {
+        state.selected.push(name);
+    }
 }
 
 fn handle_enter(state: &mut AppState) {
@@ -246,7 +266,7 @@ fn draw_info(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Box<
     Ok(())
 }
 fn draw_status(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Box<dyn Error>> {
-    let mut text = vec!["q: Quit", "i: Info", "e: Expl"];
+    let mut text = vec!["q: Quit", "i: Info", "e: Expl", "SPC: Select"];
 
     match state.sort {
         Sort::Name => text.push("s: Sort [Name]"),
@@ -320,9 +340,14 @@ fn draw_centre(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Bo
                 format!("{:?}", pack.reason),
                 pack.dependents.len().to_string(),
             ]);
+            let mut style = Style::default();
             if pack.reason == Reason::Explicit {
-                row = row.style(Style::default().fg(Color::Green));
+                style = style.fg(Color::Green);
             }
+            if state.selected.contains(&pack.name) {
+                style = style.underlined();
+            }
+            row = row.style(style);
 
             row
         })
@@ -333,13 +358,14 @@ fn draw_centre(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Bo
     } else {
         Style::default().bg(Color::Gray).fg(Color::Black)
     };
+
     let table = Table::new(rows, Constraint::from_percentages([65, 25, 10]))
         .header(
             ["Name", "Reason", "Req"]
                 .into_iter()
                 .map(Cell::from)
                 .collect::<Row>()
-                .style(Style::default().underlined().on_red()),
+                .style(Style::default().underlined().bold()),
         )
         .highlight_style(style);
     let count = state.filtered.len();
