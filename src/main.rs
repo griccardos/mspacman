@@ -2,9 +2,9 @@ pub mod structs;
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Style, Stylize},
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table},
+    widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table},
     DefaultTerminal, Frame,
 };
 use std::{collections::HashMap, error::Error, isize, process::Command};
@@ -67,6 +67,7 @@ fn run(terminal: &mut DefaultTerminal, mut state: AppState) -> Result<Vec<String
             draw_dependents(&mut state, f, body[2]).unwrap();
             draw_info(&mut state, f, body_status[1]).unwrap();
             draw_status(&mut state, f, body_status[2], &mut textarea).unwrap();
+            draw_help(&mut state, f).unwrap();
         })?;
         let must_quit = handle_event(&mut state, &mut textarea)?;
         if must_quit {
@@ -117,9 +118,8 @@ fn handle_event(state: &mut AppState, textarea: &mut TextArea) -> Result<bool, B
         if key.kind == KeyEventKind::Press {
             match key.code {
                 KeyCode::Char('q') => return Ok(true),
-                KeyCode::Esc => {
-                    clear_textarea(state, textarea);
-                }
+                KeyCode::Esc => clear_textarea(state, textarea),
+                KeyCode::Char('?') => state.show_help = !state.show_help,
                 KeyCode::Char('c') => {
                     if key.modifiers.contains(KeyModifiers::CONTROL) {
                         state.selected.clear();
@@ -368,21 +368,58 @@ fn draw_info(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Box<
     }
     Ok(())
 }
+
+fn draw_help(state: &mut AppState, f: &mut Frame) -> Result<(), Box<dyn Error>> {
+    if !state.show_help {
+        return Ok(());
+    }
+    let size = f.area();
+
+    // Calculate the block size (1/3 of the screen size)
+    let block_width = (size.width / 3).max(50);
+    let block_height = (size.height / 3).max(14);
+
+    // Calculate the block position (centered)
+    let block_x = (size.width - block_width) / 2;
+    let block_y = (size.height - block_height) / 2;
+
+    // Create a centered block
+    let block = Block::default()
+        .title("Help")
+        .borders(Borders::ALL)
+        .style(Style::default().bg(Color::Blue));
+
+    // Create a paragraph to display inside the block
+    let paragraph = Paragraph::new(vec![
+        "q: Quit".into(),
+        "i: Info".into(),
+        "d: Date".into(),
+        "e: Explicitly installed only".into(),
+        "f: Foreign packages only".into(),
+        "o: Orphans only".into(),
+        "/: Search".into(),
+        "[2-5]: Sort".into(),
+        "Alt+[2-5]: Minimize Column".into(),
+        "Enter (on outer columns): Goto Package".into(),
+        "Left/Right: Switch column".into(),
+        "Esc: Cancel search".into(),
+    ])
+    .block(block)
+    .alignment(Alignment::Left);
+    let rect = Rect::new(block_x, block_y, block_width, block_height);
+    // Render the block
+    f.render_widget(Clear, rect);
+    f.render_widget(paragraph, rect);
+
+    Ok(())
+}
 fn draw_status(
     state: &mut AppState,
     f: &mut Frame,
     rect: Rect,
     textarea: &mut TextArea,
 ) -> Result<(), Box<dyn Error>> {
-    let mut text = vec![
-        "q:Quit",
-        "i:Info",
-        "d:Date",
-        "e:Expl",
-        "f:Foreign",
-        "SPC:Select",
-        "Alt+[2-5]:Minimize",
-    ];
+    let mut text = vec!["  ?: Help   "];
     let sname = match state.sort_by.0 {
         1 => "Name",
         2 => "Reason",
@@ -391,7 +428,7 @@ fn draw_status(
         5 => "Installed",
         _ => "",
     };
-    let sname = format!("[1-5]:Sort [{sname} {:?}]", state.sort_by.1);
+    let sname = format!("Sort [{sname} {:?}]", state.sort_by.1);
     text.push(&sname);
 
     if state.prev.len() > 0 {
@@ -529,7 +566,15 @@ fn draw_centre(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Bo
     let table = Table::new(rows, widths)
         .header(
             head.into_iter()
-                .map(Cell::from)
+                .enumerate()
+                .map(|(i, c)| {
+                    let style = if state.sort_by.0 == i + 1 {
+                        Style::default().fg(Color::Yellow)
+                    } else {
+                        Style::default()
+                    };
+                    Cell::from(c).style(style)
+                })
                 .collect::<Row>()
                 .style(Style::default().underlined().bold()),
         )

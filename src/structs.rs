@@ -39,6 +39,7 @@ pub struct AppState {
     pub only_orphans: bool,
     pub filter: String,
     pub show_info: bool,
+    pub show_help: bool,
     pub hide_columns: HashMap<usize, bool>,
     pub sort_by: (usize, Sort),
     pub message: String,
