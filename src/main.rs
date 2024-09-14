@@ -1,7 +1,6 @@
 pub mod structs;
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
-use easier::prelude::*;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style, Stylize},
@@ -10,6 +9,7 @@ use ratatui::{
 };
 use std::{collections::HashMap, error::Error, isize, process::Command};
 use structs::{AppState, Focus, Package, Reason, Sort};
+use tui_textarea::TextArea;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !pacman_exists() {
@@ -43,6 +43,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn run(terminal: &mut DefaultTerminal, mut state: AppState) -> Result<Vec<String>, Box<dyn Error>> {
+    let mut textarea = get_textarea();
+
     loop {
         terminal.draw(|f| {
             let info = if state.show_info { 5 } else { 0 };
@@ -64,9 +66,9 @@ fn run(terminal: &mut DefaultTerminal, mut state: AppState) -> Result<Vec<String
             draw_centre(&mut state, f, body[1]).unwrap();
             draw_dependents(&mut state, f, body[2]).unwrap();
             draw_info(&mut state, f, body_status[1]).unwrap();
-            draw_status(&mut state, f, body_status[2]).unwrap();
+            draw_status(&mut state, f, body_status[2], &mut textarea).unwrap();
         })?;
-        let must_quit = handle_event(&mut state)?;
+        let must_quit = handle_event(&mut state, &mut textarea)?;
         if must_quit {
             break;
         }
@@ -74,11 +76,50 @@ fn run(terminal: &mut DefaultTerminal, mut state: AppState) -> Result<Vec<String
     Ok(state.selected)
 }
 
-fn handle_event(state: &mut AppState) -> Result<bool, Box<dyn Error>> {
+fn get_textarea() -> TextArea<'static> {
+    let mut textarea = TextArea::default();
+    textarea.set_placeholder_text("Search");
+    textarea.set_style(Style::default().bg(Color::Blue).fg(Color::Black));
+    textarea.set_placeholder_style(Style::default().bg(Color::Blue).fg(Color::Gray));
+    textarea
+}
+
+fn handle_event(state: &mut AppState, textarea: &mut TextArea) -> Result<bool, Box<dyn Error>> {
+    let clear_textarea = |state: &mut AppState, textarea: &mut TextArea| {
+        textarea.select_all();
+        textarea.cut();
+        state.filter = String::new();
+        update_filter(state);
+    };
     if let Event::Key(key) = event::read()? {
+        //if searching, we handle input and return
+        if state.searching {
+            match key.code {
+                KeyCode::Esc => {
+                    state.searching = false;
+                    clear_textarea(state, textarea);
+                    return Ok(false);
+                }
+                KeyCode::Enter => {
+                    state.searching = false;
+                    return Ok(false);
+                }
+                _ => {}
+            }
+
+            textarea.input(key);
+            state.filter = textarea.lines().join(" ");
+            update_filter(state);
+
+            return Ok(false);
+        }
+
         if key.kind == KeyEventKind::Press {
             match key.code {
                 KeyCode::Char('q') => return Ok(true),
+                KeyCode::Esc => {
+                    clear_textarea(state, textarea);
+                }
                 KeyCode::Char('c') => {
                     if key.modifiers.contains(KeyModifiers::CONTROL) {
                         state.selected.clear();
@@ -98,12 +139,17 @@ fn handle_event(state: &mut AppState) -> Result<bool, Box<dyn Error>> {
                     state.only_expl = !state.only_expl;
                     update_filter(state);
                 }
+                KeyCode::Char('o') => {
+                    state.only_orphans = !state.only_orphans;
+                    update_filter(state);
+                }
+
                 KeyCode::Char('f') => {
                     state.only_foreign = !state.only_foreign;
                     update_filter(state);
                 }
                 KeyCode::Char('i') => state.show_info = !state.show_info,
-                KeyCode::Esc => return Ok(true),
+                KeyCode::Char('/') => state.searching = true,
                 KeyCode::Down => safe_move(state, 1),
                 KeyCode::Up => safe_move(state, -1),
                 KeyCode::PageDown => safe_move(state, 10),
@@ -168,11 +214,11 @@ fn sort_column(state: &mut AppState, arg: usize) {
             if sort_dir == Sort::Asc {
                 state
                     .filtered
-                    .sort_by(|a, b| a.dependents.len().cmp(&b.dependents.len()));
+                    .sort_by(|a, b| a.required_by.len().cmp(&b.required_by.len()));
             } else {
                 state
                     .filtered
-                    .sort_by(|a, b| b.dependents.len().cmp(&a.dependents.len()));
+                    .sort_by(|a, b| b.required_by.len().cmp(&a.required_by.len()));
             }
         }
         4 => {
@@ -198,10 +244,16 @@ fn update_filter(state: &mut AppState) {
     state.filtered = state
         .packs
         .iter()
+        .filter(|p| (state.only_expl && p.reason == Reason::Explicit) || !state.only_expl) //only show explicit packages
+        .filter(|p| (state.only_foreign && !p.validated) || !state.only_foreign) //only show foreign packages
         .filter(|p| {
-            ((state.only_expl && p.reason == Reason::Explicit) || !state.only_expl)
-                && ((state.only_foreign && !p.validated) || !state.only_foreign)
-        })
+            (state.only_orphans
+                && p.required_by.is_empty()
+                && p.optional_for.is_empty()
+                && p.reason == Reason::Dependency)
+                || !state.only_orphans
+        }) //only show orphans
+        .filter(|p| p.name.contains(&state.filter))
         .cloned()
         .collect();
 }
@@ -210,7 +262,12 @@ fn handle_select(state: &mut AppState) {
     if state.focus != Focus::Centre {
         return;
     }
-    let name = current_pack(&state).name.clone();
+    let pack = current_pack(&state);
+    if pack.is_none() {
+        return;
+    }
+    let pack = pack.unwrap();
+    let name = pack.name.clone();
 
     if state.selected.contains(&name) {
         state.selected.retain(|p| p != &name);
@@ -221,6 +278,10 @@ fn handle_select(state: &mut AppState) {
 
 fn handle_enter(state: &mut AppState) {
     let pack = current_pack(&state);
+    if pack.is_none() {
+        return;
+    }
+    let pack = pack.unwrap();
     let name = match state.focus {
         Focus::Left => pack
             .dependencies
@@ -229,7 +290,7 @@ fn handle_enter(state: &mut AppState) {
             .unwrap_or_default(),
         Focus::Centre => return,
         Focus::Right => pack
-            .dependents
+            .required_by
             .get(state.right_table_state.selected().unwrap())
             .cloned()
             .unwrap_or_default(),
@@ -239,10 +300,11 @@ fn handle_enter(state: &mut AppState) {
         //undo any filters
         state.only_expl = false;
         state.filtered = state.packs.clone();
-
-        let prev = current_pack(&state).name.clone();
-        goto_package(state, &pack.name.clone());
-        state.prev.push(prev);
+        if let Some(prevpack) = current_pack(&state) {
+            let prev = prevpack.name.clone();
+            goto_package(state, &pack.name.clone());
+            state.prev.push(prev);
+        }
     }
 }
 
@@ -258,8 +320,12 @@ fn goto_package(state: &mut AppState, name: &str) {
 
 fn cycle_focus(state: &mut AppState, arg: i32) {
     let pack = current_pack(&state);
+    if pack.is_none() {
+        return;
+    }
+    let pack = pack.unwrap();
     let left_count = pack.dependencies.len();
-    let right_count = pack.dependents.len();
+    let right_count = pack.required_by.len();
     state.focus = if arg > 0 {
         match state.focus {
             Focus::Left => Focus::Centre,
@@ -283,6 +349,10 @@ fn cycle_focus(state: &mut AppState, arg: i32) {
 fn draw_info(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Box<dyn Error>> {
     //info
     let pack = current_pack(&state);
+    if pack.is_none() {
+        return Ok(());
+    }
+    let pack = pack.unwrap();
     let rows: Vec<Row> = [
         ("Version", pack.version.as_str()),
         ("Installed", pack.installed.as_str()),
@@ -298,7 +368,12 @@ fn draw_info(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Box<
     }
     Ok(())
 }
-fn draw_status(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Box<dyn Error>> {
+fn draw_status(
+    state: &mut AppState,
+    f: &mut Frame,
+    rect: Rect,
+    textarea: &mut TextArea,
+) -> Result<(), Box<dyn Error>> {
     let mut text = vec![
         "q:Quit",
         "i:Info",
@@ -330,16 +405,44 @@ fn draw_status(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Bo
         text.push(&state.message);
     }
 
+    let search_len = if state.searching || !textarea.is_empty() {
+        textarea
+            .lines()
+            .get(0)
+            .map(|l| l.len() + 1)
+            .unwrap_or(0)
+            .max(8) as u16
+    } else {
+        0
+    };
+
+    let layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(search_len), Constraint::Min(0)].as_ref())
+        .split(rect);
+    if state.searching || !textarea.is_empty() {
+        if state.searching {
+            textarea.set_cursor_style(Style::default().bg(Color::White));
+        } else {
+            textarea.set_cursor_style(Style::default().bg(Color::Blue));
+        }
+        f.render_widget(&*textarea, layout[0]);
+    }
+
     let para = Paragraph::new(text.join(" ")).style(Style::default().fg(Color::Yellow));
-    f.render_widget(&para, rect);
+    f.render_widget(&para, layout[1]);
     Ok(())
 }
 fn safe_move(state: &mut AppState, change: isize) {
     let pack = current_pack(&state);
+    if pack.is_none() {
+        return;
+    }
+    let pack = pack.unwrap();
     let len = match &state.focus {
         Focus::Left => pack.dependencies.len(),
         Focus::Centre => state.filtered.len(),
-        Focus::Right => pack.dependents.len(),
+        Focus::Right => pack.required_by.len(),
     };
     let tstate = match state.focus {
         Focus::Left => &mut state.left_table_state,
@@ -362,12 +465,10 @@ fn safe_move(state: &mut AppState, change: isize) {
     }
 }
 
-fn current_pack(state: &AppState) -> &Package {
-    let pack = state
+fn current_pack(state: &AppState) -> Option<&Package> {
+    state
         .filtered
         .get(state.centre_table_state.selected().unwrap_or_default())
-        .unwrap_or(state.filtered.first().unwrap());
-    pack
 }
 fn get_pack<'a, 'b>(state: &'a AppState, name: &'b str) -> Option<&'a Package> {
     let pack = state.packs.iter().find(|p| p.name == name);
@@ -383,7 +484,7 @@ fn draw_centre(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Bo
             let data = vec![
                 pack.name.clone(),
                 format!("{:?}", pack.reason),
-                pack.dependents.len().to_string(),
+                pack.required_by.len().to_string(),
                 format!("{}", if pack.validated { "" } else { "X" }),
                 pack.installed.clone(),
             ];
@@ -456,6 +557,10 @@ fn draw_dependencies(
     rect: Rect,
 ) -> Result<(), Box<dyn Error>> {
     let pack = current_pack(&state);
+    if pack.is_none() {
+        return Ok(());
+    }
+    let pack = pack.unwrap();
     let rows: Vec<Row> = pack
         .dependencies
         .iter()
@@ -487,9 +592,13 @@ fn draw_dependencies(
 }
 fn draw_dependents(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Box<dyn Error>> {
     let pack = current_pack(&state);
-    let count = pack.dependents.len();
+    if pack.is_none() {
+        return Ok(());
+    }
+    let pack = pack.unwrap();
+    let count = pack.required_by.len();
     let rows: Vec<Row> = pack
-        .dependents
+        .required_by
         .iter()
         .map(|dep| Row::new(vec![Cell::from(dep.clone())]))
         .collect();
@@ -544,7 +653,14 @@ fn get_packs() -> Result<Vec<Package>, Box<dyn std::error::Error>> {
                     .collect()
             }
             "Required By" => {
-                pack.dependents = value
+                pack.required_by = value
+                    .split_whitespace()
+                    .map(|s| s.to_string())
+                    .filter(|r| r != "None")
+                    .collect()
+            }
+            "Optional For" => {
+                pack.optional_for = value
                     .split_whitespace()
                     .map(|s| s.to_string())
                     .filter(|r| r != "None")

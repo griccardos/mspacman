@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 
 use ratatui::widgets::TableState;
+use tui_textarea::TextArea;
 
 #[derive(Debug, Default, Clone)]
 pub struct Package {
     pub name: String,
-    pub dependents: Vec<String>,
+    pub required_by: Vec<String>,
+    pub optional_for: Vec<String>,
     pub dependencies: Vec<String>,
     pub reason: Reason,
     //info
@@ -34,11 +36,15 @@ pub struct AppState {
     pub prev: Vec<String>,
     pub only_expl: bool,
     pub only_foreign: bool,
+    pub only_orphans: bool,
+    pub filter: String,
     pub show_info: bool,
     pub hide_columns: HashMap<usize, bool>,
     pub sort_by: (usize, Sort),
     pub message: String,
     pub selected: Vec<String>,
+    //for searching
+    pub searching: bool,
 }
 #[derive(Debug, Default, PartialEq, Clone, Copy)]
 pub enum Focus {

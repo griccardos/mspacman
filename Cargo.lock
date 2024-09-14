@@ -93,12 +93,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "easier"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3512b56e3afa442af0db878935a530cf9983b5fa534b0b64014898449bd51da6"
-
-[[package]]
 name = "either"
 version = "1.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -241,9 +235,9 @@ name = "mspacman"
 version = "0.1.0"
 dependencies = [
  "crossterm",
- "easier",
  "jiff",
  "ratatui",
+ "tui-textarea",
 ]
 
 [[package]]
@@ -433,6 +427,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "tui-textarea"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29c07084342a575cea919eea996b9658a358c800b03d435df581c1d7c60e065a"
+dependencies = [
+ "crossterm",
+ "ratatui",
+ "unicode-width",
 ]
 
 [[package]]

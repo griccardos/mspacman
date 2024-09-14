@@ -9,8 +9,4 @@ A simple tool to view dependencies of pacman installed packages.
 
 
 ## todo
-- [ ] show if aur
-- [ ] show if orphan
-- [ ] filter
 - [ ] delete
-- [ ] date sort
