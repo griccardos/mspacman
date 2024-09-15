@@ -2,13 +2,14 @@ pub mod structs;
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Offset, Rect},
     style::{Color, Style, Stylize},
+    text::Line,
     widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table},
     DefaultTerminal, Frame,
 };
-use std::{collections::HashMap, error::Error, isize, process::Command};
-use structs::{AppState, Focus, Package, Reason, Sort};
+use std::{collections::HashMap, error::Error, io::Write, isize, process::Command};
+use structs::{AppState, EventResult, Focus, Package, Reason, Sort};
 use tui_textarea::TextArea;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -43,7 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn run(terminal: &mut DefaultTerminal, mut state: AppState) -> Result<Vec<String>, Box<dyn Error>> {
-    let mut textarea = get_textarea();
+    let mut search_input = get_textarea("Search");
 
     loop {
         terminal.draw(|f| {
@@ -66,27 +67,34 @@ fn run(terminal: &mut DefaultTerminal, mut state: AppState) -> Result<Vec<String
             draw_centre(&mut state, f, body[1]).unwrap();
             draw_dependents(&mut state, f, body[2]).unwrap();
             draw_info(&mut state, f, body_status[1]).unwrap();
-            draw_status(&mut state, f, body_status[2], &mut textarea).unwrap();
+            draw_status(&mut state, f, body_status[2], &mut search_input).unwrap();
             draw_help(&mut state, f).unwrap();
+            draw_command(&mut state, f).unwrap();
         })?;
-        let must_quit = handle_event(&mut state, &mut textarea)?;
-        if must_quit {
-            break;
+        match handle_event(&mut state, &mut search_input)? {
+            EventResult::None => {}
+            EventResult::Quit => break,
+            EventResult::Command(c) => {
+                run_command(&mut state, terminal, c)?;
+            }
         }
     }
     Ok(state.selected)
 }
 
-fn get_textarea() -> TextArea<'static> {
+fn get_textarea(label: &str) -> TextArea<'static> {
     let mut textarea = TextArea::default();
-    textarea.set_placeholder_text("Search");
-    textarea.set_style(Style::default().bg(Color::Blue).fg(Color::Black));
-    textarea.set_placeholder_style(Style::default().bg(Color::Blue).fg(Color::Gray));
+    textarea.set_placeholder_text(label);
+    textarea.set_style(Style::default().bg(Color::Gray).fg(Color::Black));
+    textarea.set_placeholder_style(Style::default().bg(Color::Gray).fg(Color::DarkGray));
     textarea
 }
 
-fn handle_event(state: &mut AppState, textarea: &mut TextArea) -> Result<bool, Box<dyn Error>> {
-    let clear_textarea = |state: &mut AppState, textarea: &mut TextArea| {
+fn handle_event(
+    state: &mut AppState,
+    search_input: &mut TextArea,
+) -> Result<EventResult, Box<dyn Error>> {
+    let clear_search = |state: &mut AppState, textarea: &mut TextArea| {
         textarea.select_all();
         textarea.cut();
         state.filter = String::new();
@@ -98,32 +106,56 @@ fn handle_event(state: &mut AppState, textarea: &mut TextArea) -> Result<bool, B
             match key.code {
                 KeyCode::Esc => {
                     state.searching = false;
-                    clear_textarea(state, textarea);
-                    return Ok(false);
+                    clear_search(state, search_input);
+                    return Ok(EventResult::None);
                 }
                 KeyCode::Enter => {
                     state.searching = false;
-                    return Ok(false);
+                    return Ok(EventResult::None);
                 }
                 _ => {}
             }
 
-            textarea.input(key);
-            state.filter = textarea.lines().join(" ");
+            search_input.input(key);
+            state.filter = search_input.lines().join(" ");
             update_filter(state);
 
-            return Ok(false);
+            return Ok(EventResult::None);
+        }
+        //if searching, we handle input and return
+        if state.show_command {
+            state.show_command = false;
+            match key.code {
+                KeyCode::Char('r') => return Ok(EventResult::Command('r')),
+                KeyCode::Char('q') => return Ok(EventResult::Command('q')),
+                KeyCode::Char('i') => return Ok(EventResult::Command('i')),
+
+                _ => {}
+            }
+
+            return Ok(EventResult::None);
         }
 
         if key.kind == KeyEventKind::Press {
             match key.code {
-                KeyCode::Char('q') => return Ok(true),
-                KeyCode::Esc => clear_textarea(state, textarea),
+                KeyCode::Char('q') => return Ok(EventResult::Quit),
+                KeyCode::Esc => {
+                    state.only_expl = false;
+                    state.only_foreign = false;
+                    state.only_orphans = false;
+                    clear_search(state, search_input);
+                    update_filter(state);
+                }
                 KeyCode::Char('?') => state.show_help = !state.show_help,
+
                 KeyCode::Char('c') => {
                     if key.modifiers.contains(KeyModifiers::CONTROL) {
                         state.selected.clear();
-                        return Ok(true);
+                        return Ok(EventResult::Quit);
+                    } else {
+                        if !state.selected.is_empty() {
+                            state.show_command = true;
+                        }
                     }
                 }
                 KeyCode::Char(val) if val >= '1' && val <= '5' => {
@@ -149,6 +181,7 @@ fn handle_event(state: &mut AppState, textarea: &mut TextArea) -> Result<bool, B
                     update_filter(state);
                 }
                 KeyCode::Char('i') => state.show_info = !state.show_info,
+                KeyCode::Char('r') => state.packs = get_packs()?,
                 KeyCode::Char('/') => state.searching = true,
                 KeyCode::Down => safe_move(state, 1),
                 KeyCode::Up => safe_move(state, -1),
@@ -169,7 +202,61 @@ fn handle_event(state: &mut AppState, textarea: &mut TextArea) -> Result<bool, B
             }
         }
     }
-    Ok(false)
+    Ok(EventResult::None)
+}
+
+fn run_command(
+    state: &mut AppState,
+    terminal: &mut DefaultTerminal,
+    char: char,
+) -> Result<(), Box<dyn Error>> {
+    if state.selected.is_empty() {
+        return Ok(());
+    }
+    use crossterm::terminal::EnterAlternateScreen;
+    use crossterm::terminal::LeaveAlternateScreen;
+    use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+    use crossterm::ExecutableCommand;
+    use std::io::stdout;
+    stdout().execute(LeaveAlternateScreen)?;
+    disable_raw_mode()?;
+
+    let (comm, mut args) = match char {
+        'r' => ("pacman", vec!["-R"]),
+        'q' => ("pacman", vec!["-Qi"]),
+        _ => return Ok(()),
+    };
+    args.extend(state.selected.iter().map(|a| a.as_str()));
+
+    //try run command as is
+
+    std::io::stdout()
+        .write(format!("Running command: {} {}\n", comm, args.join(" ")).as_bytes())?;
+    let res = Command::new(comm).args(&args).status()?;
+
+    if !res.success() {
+        std::io::stdout().write("running sudo\n".as_bytes())?;
+        //run as sudo
+        args.insert(0, comm);
+        args.insert(0, "-S");
+        let res = Command::new("sudo").args(&args).status()?;
+        if !res.success() {
+            std::io::stdout().write("Failed to run command".as_bytes())?;
+        }
+    }
+    std::io::stdout().write("\nPress enter to continue...".as_bytes())?;
+    std::io::stdout().flush()?;
+    crossterm::event::read()?;
+
+    stdout().execute(EnterAlternateScreen)?;
+    enable_raw_mode()?;
+    terminal.clear()?;
+
+    let before = state.packs.len();
+    state.packs = get_packs()?;
+    update_filter(state);
+    state.message = format!("{}->{}", before, state.packs.len());
+    Ok(())
 }
 
 fn hide_column(state: &mut AppState, arg: usize) {
@@ -256,6 +343,23 @@ fn update_filter(state: &mut AppState) {
         .filter(|p| p.name.contains(&state.filter))
         .cloned()
         .collect();
+
+    //if empty, we have no selection
+    if state.filtered.is_empty() {
+        state.centre_table_state.select(None);
+    } else {
+        //if we are more than the length, select the first
+        if let Some(i) = state.centre_table_state.selected() {
+            if i >= state.filtered.len() {
+                state.centre_table_state.select(Some(0));
+            }
+        } else {
+            state.centre_table_state.select(Some(0));
+        }
+    }
+    state
+        .selected
+        .retain(|p| state.packs.iter().any(|f| f.name == *p));
 }
 
 fn handle_select(state: &mut AppState) {
@@ -369,6 +473,64 @@ fn draw_info(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Box<
     Ok(())
 }
 
+fn draw_command(state: &mut AppState, f: &mut Frame) -> Result<(), Box<dyn Error>> {
+    if !state.show_command {
+        return Ok(());
+    }
+    let size = f.area();
+    // Calculate the block size (1/3 of the screen size)
+    let block_width = (size.width / 3).max(50);
+    let block_height = (size.height / 3).max(14);
+
+    // Calculate the block position (centered)
+    let block_x = (size.width - block_width) / 2;
+    let block_y = (size.height - block_height) / 2;
+
+    // Create a centered block
+    let block = Block::default()
+        .title("Run command on selection")
+        .borders(Borders::ALL)
+        .title_style(Color::Black)
+        .style(Style::default().bg(Color::Blue));
+
+    //break up list of packages into lines, with a max length of block_width
+    let mut lines = vec![];
+    let mut line = String::new();
+    for word in &state.selected {
+        if line.len() + word.len() + 1 > block_width as usize {
+            lines.push(line.clone());
+            line.clear();
+        }
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        line.push_str(word);
+    }
+    lines.push(line);
+    let mut para_lines: Vec<Line> =
+        vec![format!("{} packages selected", state.selected.len()).into()];
+    para_lines.extend(
+        lines
+            .into_iter()
+            .map(|s| Line::from(s).style(Style::default().fg(Color::Yellow))),
+    );
+    para_lines.extend(vec![
+        "".into(),
+        "Commands:".into(),
+        "r: Remove".into(),
+        "q: Query".into(),
+    ]);
+
+    let paragraph = Paragraph::new(para_lines);
+    let window_rect = Rect::new(block_x, block_y, block_width, block_height);
+    let para_rect = window_rect.clone().offset(Offset { y: 3, x: 1 });
+
+    // Render the block
+    f.render_widget(Clear, window_rect);
+    f.render_widget(block, window_rect);
+    f.render_widget(paragraph, para_rect);
+    Ok(())
+}
 fn draw_help(state: &mut AppState, f: &mut Frame) -> Result<(), Box<dyn Error>> {
     if !state.show_help {
         return Ok(());
@@ -402,7 +564,9 @@ fn draw_help(state: &mut AppState, f: &mut Frame) -> Result<(), Box<dyn Error>> 
         "Alt+[2-5]: Minimize Column".into(),
         "Enter (on outer columns): Goto Package".into(),
         "Left/Right: Switch column".into(),
-        "Esc: Cancel search".into(),
+        "Esc: Clear filters".into(),
+        "Space: Select/Deselect".into(),
+        "c: Run command on selection".into(),
     ])
     .block(block)
     .alignment(Alignment::Left);
@@ -434,10 +598,26 @@ fn draw_status(
     if state.prev.len() > 0 {
         text.push("BSP: Back");
     }
-
+    let mut filters = vec![];
     if state.only_expl {
-        text.push("Showing only Explicitly Installed");
+        filters.push("ExplcityInstalled")
     }
+    if state.only_foreign {
+        filters.push("Foreign");
+    }
+    if state.only_orphans {
+        filters.push("Orphans");
+    }
+    let txt = format!("'{}'", state.filter);
+
+    if !state.filter.is_empty() {
+        filters.push(&txt);
+    }
+    let fil = format!("Filters [{}]", filters.join(", "));
+    if !filters.is_empty() {
+        text.push(&fil);
+    }
+
     if !state.message.is_empty() {
         text.push(&state.message);
     }
@@ -461,7 +641,7 @@ fn draw_status(
         if state.searching {
             textarea.set_cursor_style(Style::default().bg(Color::White));
         } else {
-            textarea.set_cursor_style(Style::default().bg(Color::Blue));
+            textarea.set_cursor_style(Style::default().bg(Color::Gray));
         }
         f.render_widget(&*textarea, layout[0]);
     }
@@ -589,6 +769,11 @@ fn draw_centre(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Bo
     };
     let block = Block::default()
         .title(format!("Installed {count}{extra}"))
+        .title_bottom(if state.selected.is_empty() {
+            "".to_string()
+        } else {
+            format!("{} selected", state.selected.len())
+        })
         .borders(Borders::all());
     let table = table.block(block);
     f.render_stateful_widget(&table, rect, &mut state.centre_table_state);

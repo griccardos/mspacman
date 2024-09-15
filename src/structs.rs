@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use ratatui::widgets::TableState;
-use tui_textarea::TextArea;
 
 #[derive(Debug, Default, Clone)]
 pub struct Package {
@@ -46,6 +45,9 @@ pub struct AppState {
     pub selected: Vec<String>,
     //for searching
     pub searching: bool,
+    //for command
+    pub command: String,
+    pub show_command: bool,
 }
 #[derive(Debug, Default, PartialEq, Clone, Copy)]
 pub enum Focus {
@@ -60,4 +62,10 @@ pub enum Sort {
     #[default]
     Asc,
     Desc,
+}
+
+pub enum EventResult {
+    None,
+    Quit,
+    Command(char),
 }
