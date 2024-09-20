@@ -2,9 +2,11 @@
 A simple tool to view dependencies of pacman installed packages.
 
 ## Features
-- View dependencies of pacman installed packages.
-- Jump around dependencies and follow dependency chain.
-- View exlpicitly installed packages.
-- Sort by dependencies
+- view dependencies of pacman installed packages
+- jump around dependencies and follow dependency chain
+- view explicitly installed packages
+- sort by number of dependencies
+- find package
+- filter by name, explicitly installed, orphans
 
 ![Screenshot](Screenshot.png)
