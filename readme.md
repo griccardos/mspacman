@@ -7,4 +7,4 @@ A simple tool to view dependencies of pacman installed packages.
 - View exlpicitly installed packages.
 - Sort by dependencies
 
-[Screenshot](Screenshot.png)
+![Screenshot](Screenshot.png)
