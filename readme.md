@@ -1,6 +1,12 @@
 # mspacman
 A simple tool to view dependencies of pacman installed packages in Arch linux and derivatives
 
+## Requires
+- pacman to be installed
+
+## Install
+cargo install mspacman
+
 
 ## Features
 - view dependencies of pacman installed packages
