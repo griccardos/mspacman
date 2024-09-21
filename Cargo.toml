@@ -9,7 +9,7 @@ readme = "readme.md"
 description = "pacman package dependency viewer"
 keywords = ["pacman","archlinux","arch","package"]
 authors = ["griccardos"]
-categories = ["command-line-utilites"]
+categories = ["command-line-utilities"]
 
 
 
