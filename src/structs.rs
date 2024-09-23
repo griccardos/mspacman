@@ -8,6 +8,7 @@ pub struct Package {
     pub required_by: Vec<String>,
     pub optional_for: Vec<String>,
     pub dependencies: Vec<String>,
+    pub provides: Vec<String>,
     pub reason: Reason,
     //info
     pub version: String,
@@ -30,6 +31,7 @@ pub struct AppState {
     pub centre_table_state: TableState,
     pub left_table_state: TableState,
     pub right_table_state: TableState,
+    pub provides_table_state: TableState,
     pub focus: Focus,
     pub sort: Sort,
     pub prev: Vec<String>,
@@ -39,6 +41,7 @@ pub struct AppState {
     pub filter: String,
     pub show_info: bool,
     pub show_help: bool,
+    pub show_providing: bool,
     pub hide_columns: HashMap<usize, bool>,
     pub sort_by: (usize, Sort),
     pub message: String,
@@ -55,6 +58,7 @@ pub enum Focus {
     #[default]
     Centre,
     Right,
+    Provides,
 }
 
 #[derive(Debug, Default, PartialEq, Clone, Copy)]

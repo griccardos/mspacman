@@ -48,26 +48,33 @@ fn run(terminal: &mut DefaultTerminal, mut state: AppState) -> Result<Vec<String
 
     loop {
         terminal.draw(|f| {
-            let info = if state.show_info { 5 } else { 0 };
+            let info = if state.show_info { 6 } else { 0 };
+            let pr = if state.show_providing {
+                ((f.area().height as f32 * 0.5) as u16).max(5)
+            } else {
+                0
+            };
 
-            let body_status = Layout::default()
+            let top_bottom = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
                     Constraint::Percentage(100),
                     Constraint::Min(info),
+                    Constraint::Min(pr),
                     Constraint::Min(1),
                 ])
                 .split(f.area());
             let body = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints(Constraint::from_percentages([20, 60, 20]))
-                .split(body_status[0]);
+                .split(top_bottom[0]);
 
             draw_dependencies(&mut state, f, body[0]).unwrap();
             draw_centre(&mut state, f, body[1]).unwrap();
             draw_dependents(&mut state, f, body[2]).unwrap();
-            draw_info(&mut state, f, body_status[1]).unwrap();
-            draw_status(&mut state, f, body_status[2], &mut search_input).unwrap();
+            draw_info(&mut state, f, top_bottom[1]).unwrap();
+            draw_provides(&mut state, f, top_bottom[2]).unwrap();
+            draw_status(&mut state, f, top_bottom[3], &mut search_input).unwrap();
             draw_help(&mut state, f).unwrap();
             draw_command(&mut state, f).unwrap();
         })?;
@@ -143,6 +150,8 @@ fn handle_event(
                     state.only_expl = false;
                     state.only_foreign = false;
                     state.only_orphans = false;
+                    state.show_help = false;
+                    state.show_command = false;
                     clear_search(state, search_input);
                     update_filter(state);
                 }
@@ -181,6 +190,7 @@ fn handle_event(
                     update_filter(state);
                 }
                 KeyCode::Char('i') => state.show_info = !state.show_info,
+                KeyCode::Char('p') => state.show_providing = !state.show_providing,
                 KeyCode::Char('r') => state.packs = get_packs()?,
                 KeyCode::Char('/') => state.searching = true,
                 KeyCode::Down => safe_move(state, 1),
@@ -189,9 +199,10 @@ fn handle_event(
                 KeyCode::PageUp => safe_move(state, -10),
                 KeyCode::Home => safe_move(state, -isize::MAX),
                 KeyCode::End => safe_move(state, isize::MAX),
-                KeyCode::Left => cycle_focus(state, -1),
-                KeyCode::Right => cycle_focus(state, 1),
+                KeyCode::Left => cycle_focus_horiz(state, -1),
+                KeyCode::Right => cycle_focus_horiz(state, 1),
                 KeyCode::Enter => handle_enter(state),
+                KeyCode::Tab => cycle_focus_vert(state),
                 KeyCode::Char(' ') => handle_select(state),
                 KeyCode::Backspace => {
                     if let Some(prev) = state.prev.pop() {
@@ -398,6 +409,7 @@ fn handle_enter(state: &mut AppState) {
             .get(state.right_table_state.selected().unwrap())
             .cloned()
             .unwrap_or_default(),
+        Focus::Provides => return,
     };
 
     if let Some(pack) = get_pack(&state, &name).cloned() {
@@ -422,7 +434,28 @@ fn goto_package(state: &mut AppState, name: &str) {
     state.centre_table_state.select(Some(new_index));
 }
 
-fn cycle_focus(state: &mut AppState, arg: i32) {
+fn cycle_focus_vert(state: &mut AppState) {
+    state.focus = match state.focus {
+        Focus::Provides => Focus::Centre,
+        _ => {
+            if state.show_providing {
+                Focus::Provides
+            } else {
+                Focus::Centre
+            }
+        }
+    };
+    if let Some(curr) = current_pack(&state) {
+        if state.focus == Focus::Provides
+            && state.provides_table_state.selected().is_none()
+            && curr.provides.len() > 0
+        {
+            state.provides_table_state.select(Some(0));
+        }
+    }
+}
+
+fn cycle_focus_horiz(state: &mut AppState, arg: i32) {
     let pack = current_pack(&state);
     if pack.is_none() {
         return;
@@ -447,6 +480,7 @@ fn cycle_focus(state: &mut AppState, arg: i32) {
         Focus::Left => state.left_table_state.select(Some(0)),
         Focus::Centre => {}
         Focus::Right => state.right_table_state.select(Some(0)),
+        Focus::Provides => {}
     }
 }
 
@@ -458,6 +492,7 @@ fn draw_info(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Box<
     }
     let pack = pack.unwrap();
     let rows: Vec<Row> = [
+        ("Name", pack.name.as_str()),
         ("Version", pack.version.as_str()),
         ("Installed", pack.installed.as_str()),
         ("Description", pack.description.as_str()),
@@ -555,6 +590,7 @@ fn draw_help(state: &mut AppState, f: &mut Frame) -> Result<(), Box<dyn Error>> 
     let paragraph = Paragraph::new(vec![
         "q: Quit".into(),
         "i: Info".into(),
+        "p: Provides".into(),
         "d: Date".into(),
         "e: Explicitly installed only".into(),
         "f: Foreign packages only".into(),
@@ -564,6 +600,7 @@ fn draw_help(state: &mut AppState, f: &mut Frame) -> Result<(), Box<dyn Error>> 
         "Alt+[2-5]: Minimize Column".into(),
         "Enter (on outer columns): Goto Package".into(),
         "Left/Right: Switch column".into(),
+        "Tab: Cycle tabs".into(),
         "Esc: Clear filters".into(),
         "Space: Select/Deselect".into(),
         "c: Run command on selection".into(),
@@ -660,11 +697,13 @@ fn safe_move(state: &mut AppState, change: isize) {
         Focus::Left => pack.dependencies.len(),
         Focus::Centre => state.filtered.len(),
         Focus::Right => pack.required_by.len(),
+        Focus::Provides => pack.provides.len(),
     };
     let tstate = match state.focus {
         Focus::Left => &mut state.left_table_state,
         Focus::Centre => &mut state.centre_table_state,
         Focus::Right => &mut state.right_table_state,
+        Focus::Provides => &mut state.provides_table_state,
     };
 
     if change < 0 {
@@ -720,7 +759,7 @@ fn draw_centre(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Bo
         })
         .collect();
 
-    let style = if state.focus == Focus::Centre {
+    let sel_style = if state.focus == Focus::Centre {
         Style::default().bg(Color::Yellow).fg(Color::Black)
     } else {
         Style::default().bg(Color::Gray).fg(Color::Black)
@@ -758,7 +797,7 @@ fn draw_centre(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Bo
                 .collect::<Row>()
                 .style(Style::default().underlined().bold()),
         )
-        .highlight_style(style);
+        .highlight_style(sel_style);
     let count = state.filtered.len();
     let local = state.filtered.iter().filter(|p| p.validated).count();
     let foreign = count - local;
@@ -847,17 +886,53 @@ fn draw_dependents(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<()
     Ok(())
 }
 
+fn draw_provides(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Box<dyn Error>> {
+    let pack = current_pack(&state);
+    if pack.is_none() {
+        return Ok(());
+    }
+    let pack = pack.unwrap();
+    let count = pack.provides.len();
+    let rows: Vec<Row> = pack
+        .provides
+        .iter()
+        .map(|pro| Row::new(vec![Cell::from(pro.clone())]))
+        .collect();
+    let style = if state.focus == Focus::Provides {
+        Style::default().bg(Color::Yellow).fg(Color::Black)
+    } else {
+        Style::default()
+    };
+    state.message = "Prov".into();
+
+    let table = Table::new(rows, [Constraint::Min(0)]).highlight_style(style);
+    let block = Block::default()
+        .title(format!("Provides {count}"))
+        .borders(Borders::all());
+    let table = table.block(block);
+    f.render_stateful_widget(&table, rect, &mut state.provides_table_state);
+    Ok(())
+}
+
 fn pacman_exists() -> bool {
     Command::new("pacman").output().is_ok()
 }
 
 fn get_packs() -> Result<Vec<Package>, Box<dyn std::error::Error>> {
-    let output = Command::new("pacman").arg("-Qi").output()?;
+    let output = Command::new("pacman").arg("-Qil").output()?;
     let output = String::from_utf8(output.stdout)?;
     let mut packs: Vec<Package> = vec![];
     let mut pack = Package::default();
 
     for line in output.lines() {
+        //if listing provides:
+        if !pack.name.is_empty() && line.starts_with(&pack.name) {
+            if let Some((_, pr)) = line.split_once(" ") {
+                pack.provides.push(pr.to_string());
+            }
+            continue;
+        }
+
         let pair = line.split_once(':');
         if pair.is_none() {
             continue;
@@ -865,7 +940,6 @@ fn get_packs() -> Result<Vec<Package>, Box<dyn std::error::Error>> {
         let (key, value) = pair.unwrap();
         let key = key.trim();
         let value = value.trim();
-
         match key {
             "Name" => {
                 if !pack.name.is_empty() {
