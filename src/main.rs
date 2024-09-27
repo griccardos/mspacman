@@ -600,7 +600,7 @@ fn draw_help(state: &mut AppState, f: &mut Frame) -> Result<(), Box<dyn Error>> 
         "Alt+[2-5]: Minimize Column".into(),
         "Enter (on outer columns): Goto Package".into(),
         "Left/Right: Switch column".into(),
-        "Tab: Cycle tabs".into(),
+        "Tab: Jump to provides tab".into(),
         "Esc: Clear filters".into(),
         "Space: Select/Deselect".into(),
         "c: Run command on selection".into(),
