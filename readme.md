@@ -14,6 +14,7 @@ cargo install mspacman
 - view explicitly installed packages
 - sort by number of dependencies
 - find package
-- filter by name, explicitly installed, orphans
+- filter by name, explicitly installed, orphans, foreign installed
+- view the files that is provided by a package
 
 ![Screenshot](Screenshot.png)
