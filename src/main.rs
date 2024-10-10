@@ -8,7 +8,7 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table},
     DefaultTerminal, Frame,
 };
-use std::{collections::HashMap, error::Error, io::Write, isize, process::Command};
+use std::{collections::HashMap, error::Error, io::Write, process::Command};
 use structs::{AppState, EventResult, Focus, Package, Reason, Sort};
 use tui_textarea::TextArea;
 
@@ -82,7 +82,12 @@ fn run(terminal: &mut DefaultTerminal, mut state: AppState) -> Result<Vec<String
             EventResult::None => {}
             EventResult::Quit => break,
             EventResult::Command(c) => {
-                run_command(&mut state, terminal, c)?;
+                let _ = goto_screen(false, terminal);
+                let res = run_command(&mut state, c);
+                let _ = goto_screen(true, terminal);
+                if let Err(e) = res {
+                    state.message = e.to_string();
+                }
             }
         }
     }
@@ -135,8 +140,7 @@ fn handle_event(
             match key.code {
                 KeyCode::Char('r') => return Ok(EventResult::Command('r')),
                 KeyCode::Char('q') => return Ok(EventResult::Command('q')),
-                KeyCode::Char('i') => return Ok(EventResult::Command('i')),
-
+                KeyCode::Char('s') => return Ok(EventResult::Command('s')),
                 _ => {}
             }
 
@@ -152,22 +156,20 @@ fn handle_event(
                     state.only_orphans = false;
                     state.show_help = false;
                     state.show_command = false;
+                    state.selected.clear();
                     clear_search(state, search_input);
                     update_filter(state);
                 }
-                KeyCode::Char('?') => state.show_help = !state.show_help,
-
+                KeyCode::Char('?') | KeyCode::Char('h') => state.show_help = !state.show_help,
                 KeyCode::Char('c') => {
                     if key.modifiers.contains(KeyModifiers::CONTROL) {
                         state.selected.clear();
                         return Ok(EventResult::Quit);
-                    } else {
-                        if !state.selected.is_empty() {
-                            state.show_command = true;
-                        }
+                    } else if !state.selected.is_empty() {
+                        state.show_command = true;
                     }
                 }
-                KeyCode::Char(val) if val >= '1' && val <= '5' => {
+                KeyCode::Char(val) if ('1'..='5').contains(&val) => {
                     let val = val.to_digit(10).unwrap() as usize;
                     if key.modifiers.contains(KeyModifiers::ALT) {
                         hide_column(state, val)
@@ -216,52 +218,54 @@ fn handle_event(
     Ok(EventResult::None)
 }
 
-fn run_command(
-    state: &mut AppState,
-    terminal: &mut DefaultTerminal,
-    char: char,
-) -> Result<(), Box<dyn Error>> {
-    if state.selected.is_empty() {
-        return Ok(());
-    }
+fn goto_screen(alternate: bool, terminal: &mut DefaultTerminal) -> Result<(), Box<dyn Error>> {
     use crossterm::terminal::EnterAlternateScreen;
     use crossterm::terminal::LeaveAlternateScreen;
     use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
     use crossterm::ExecutableCommand;
     use std::io::stdout;
-    stdout().execute(LeaveAlternateScreen)?;
-    disable_raw_mode()?;
 
-    let (comm, mut args) = match char {
-        'r' => ("pacman", vec!["-R"]),
-        'q' => ("pacman", vec!["-Qi"]),
-        _ => return Ok(()),
-    };
-    args.extend(state.selected.iter().map(|a| a.as_str()));
-
-    //try run command as is
-
-    std::io::stdout()
-        .write(format!("Running command: {} {}\n", comm, args.join(" ")).as_bytes())?;
-    let res = Command::new(comm).args(&args).status()?;
-
-    if !res.success() {
-        std::io::stdout().write("running sudo\n".as_bytes())?;
-        //run as sudo
-        args.insert(0, comm);
-        args.insert(0, "-S");
-        let res = Command::new("sudo").args(&args).status()?;
-        if !res.success() {
-            std::io::stdout().write("Failed to run command".as_bytes())?;
-        }
+    if alternate {
+        stdout().execute(EnterAlternateScreen)?;
+        enable_raw_mode()?;
+        terminal.clear()?;
+    } else {
+        stdout().execute(LeaveAlternateScreen)?;
+        disable_raw_mode()?;
     }
-    std::io::stdout().write("\nPress enter to continue...".as_bytes())?;
-    std::io::stdout().flush()?;
-    crossterm::event::read()?;
+    Ok(())
+}
 
-    stdout().execute(EnterAlternateScreen)?;
-    enable_raw_mode()?;
-    terminal.clear()?;
+fn run_command(state: &mut AppState, char: char) -> Result<(), Box<dyn Error>> {
+    if state.selected.is_empty() {
+        return Ok(());
+    }
+    let comm_arg = match char {
+        'r' => Some(("pacman", vec!["-R"])),
+        'q' => Some(("pacman", vec!["-Qi"])),
+        's' => Some(("pacman", vec!["-S"])),
+        _ => None,
+    };
+    if let Some((comm, mut args)) = comm_arg {
+        args.extend(state.selected.iter().map(|a| a.as_str()));
+
+        //try run command as is
+        let res = Command::new(comm).args(&args).status()?;
+
+        if !res.success() {
+            std::io::stdout().write_all("running sudo\n".as_bytes())?;
+            //run as sudo
+            args.insert(0, comm);
+            args.insert(0, "-S");
+            let res = Command::new("sudo").args(&args).status()?;
+            if !res.success() {
+                std::io::stdout().write_all("Failed to run command".as_bytes())?;
+            }
+        }
+        std::io::stdout().write_all("\nPress enter to continue...".as_bytes())?;
+        std::io::stdout().flush()?;
+        crossterm::event::read()?;
+    };
 
     let before = state.packs.len();
     state.packs = get_packs()?;
@@ -342,14 +346,13 @@ fn update_filter(state: &mut AppState) {
     state.filtered = state
         .packs
         .iter()
-        .filter(|p| (state.only_expl && p.reason == Reason::Explicit) || !state.only_expl) //only show explicit packages
-        .filter(|p| (state.only_foreign && !p.validated) || !state.only_foreign) //only show foreign packages
+        .filter(|p| !state.only_expl || p.reason == Reason::Explicit) //only show explicit packages
+        .filter(|p| !state.only_foreign || !p.validated) //only show foreign packages
         .filter(|p| {
-            (state.only_orphans
-                && p.required_by.is_empty()
-                && p.optional_for.is_empty()
-                && p.reason == Reason::Dependency)
-                || !state.only_orphans
+            !state.only_orphans
+                || p.required_by.is_empty()
+                    && p.optional_for.is_empty()
+                    && p.reason == Reason::Dependency
         }) //only show orphans
         .filter(|p| p.name.contains(&state.filter))
         .cloned()
@@ -377,7 +380,7 @@ fn handle_select(state: &mut AppState) {
     if state.focus != Focus::Centre {
         return;
     }
-    let pack = current_pack(&state);
+    let pack = current_pack(state);
     if pack.is_none() {
         return;
     }
@@ -392,7 +395,7 @@ fn handle_select(state: &mut AppState) {
 }
 
 fn handle_enter(state: &mut AppState) {
-    let pack = current_pack(&state);
+    let pack = current_pack(state);
     if pack.is_none() {
         return;
     }
@@ -412,11 +415,11 @@ fn handle_enter(state: &mut AppState) {
         Focus::Provides => return,
     };
 
-    if let Some(pack) = get_pack(&state, &name).cloned() {
+    if let Some(pack) = get_pack(state, &name).cloned() {
         //undo any filters
         state.only_expl = false;
         state.filtered = state.packs.clone();
-        if let Some(prevpack) = current_pack(&state) {
+        if let Some(prevpack) = current_pack(state) {
             let prev = prevpack.name.clone();
             goto_package(state, &pack.name.clone());
             state.prev.push(prev);
@@ -428,7 +431,7 @@ fn goto_package(state: &mut AppState, name: &str) {
     let new_index = state
         .filtered
         .iter()
-        .position(|p| &p.name == name)
+        .position(|p| p.name == name)
         .unwrap_or_default();
     state.focus = Focus::Centre;
     state.centre_table_state.select(Some(new_index));
@@ -445,10 +448,10 @@ fn cycle_focus_vert(state: &mut AppState) {
             }
         }
     };
-    if let Some(curr) = current_pack(&state) {
+    if let Some(curr) = current_pack(state) {
         if state.focus == Focus::Provides
             && state.provides_table_state.selected().is_none()
-            && curr.provides.len() > 0
+            && !curr.provides.is_empty()
         {
             state.provides_table_state.select(Some(0));
         }
@@ -456,7 +459,7 @@ fn cycle_focus_vert(state: &mut AppState) {
 }
 
 fn cycle_focus_horiz(state: &mut AppState, arg: i32) {
-    let pack = current_pack(&state);
+    let pack = current_pack(state);
     if pack.is_none() {
         return;
     }
@@ -486,7 +489,7 @@ fn cycle_focus_horiz(state: &mut AppState, arg: i32) {
 
 fn draw_info(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Box<dyn Error>> {
     //info
-    let pack = current_pack(&state);
+    let pack = current_pack(state);
     if pack.is_none() {
         return Ok(());
     }
@@ -553,12 +556,13 @@ fn draw_command(state: &mut AppState, f: &mut Frame) -> Result<(), Box<dyn Error
         "".into(),
         "Commands:".into(),
         "r: Remove".into(),
+        "s: Sync/Update".into(),
         "q: Query".into(),
     ]);
 
     let paragraph = Paragraph::new(para_lines);
     let window_rect = Rect::new(block_x, block_y, block_width, block_height);
-    let para_rect = window_rect.clone().offset(Offset { y: 3, x: 1 });
+    let para_rect = window_rect.offset(Offset { y: 3, x: 1 });
 
     // Render the block
     f.render_widget(Clear, window_rect);
@@ -601,7 +605,7 @@ fn draw_help(state: &mut AppState, f: &mut Frame) -> Result<(), Box<dyn Error>> 
         "Enter (on outer columns): Goto Package".into(),
         "Left/Right: Switch column".into(),
         "Tab: Jump to provides tab".into(),
-        "Esc: Clear filters".into(),
+        "Esc: Clear filters and selection".into(),
         "Space: Select/Deselect".into(),
         "c: Run command on selection".into(),
     ])
@@ -632,7 +636,7 @@ fn draw_status(
     let sname = format!("Sort [{sname} {:?}]", state.sort_by.1);
     text.push(&sname);
 
-    if state.prev.len() > 0 {
+    if !state.prev.is_empty() {
         text.push("BSP: Back");
     }
     let mut filters = vec![];
@@ -662,7 +666,7 @@ fn draw_status(
     let search_len = if state.searching || !textarea.is_empty() {
         textarea
             .lines()
-            .get(0)
+            .first()
             .map(|l| l.len() + 1)
             .unwrap_or(0)
             .max(8) as u16
@@ -688,7 +692,7 @@ fn draw_status(
     Ok(())
 }
 fn safe_move(state: &mut AppState, change: isize) {
-    let pack = current_pack(&state);
+    let pack = current_pack(state);
     if pack.is_none() {
         return;
     }
@@ -710,7 +714,7 @@ fn safe_move(state: &mut AppState, change: isize) {
         tstate.select(
             tstate
                 .selected()
-                .map(|s| s.saturating_sub(change.abs() as usize)),
+                .map(|s| s.saturating_sub(change.unsigned_abs())),
         );
     } else {
         tstate.select(
@@ -726,7 +730,7 @@ fn current_pack(state: &AppState) -> Option<&Package> {
         .filtered
         .get(state.centre_table_state.selected().unwrap_or_default())
 }
-fn get_pack<'a, 'b>(state: &'a AppState, name: &'b str) -> Option<&'a Package> {
+fn get_pack<'a>(state: &'a AppState, name: &str) -> Option<&'a Package> {
     let pack = state.packs.iter().find(|p| p.name == name);
     pack
 }
@@ -825,7 +829,7 @@ fn draw_dependencies(
     f: &mut Frame,
     rect: Rect,
 ) -> Result<(), Box<dyn Error>> {
-    let pack = current_pack(&state);
+    let pack = current_pack(state);
     if pack.is_none() {
         return Ok(());
     }
@@ -860,7 +864,7 @@ fn draw_dependencies(
     Ok(())
 }
 fn draw_dependents(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Box<dyn Error>> {
-    let pack = current_pack(&state);
+    let pack = current_pack(state);
     if pack.is_none() {
         return Ok(());
     }
@@ -887,7 +891,7 @@ fn draw_dependents(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<()
 }
 
 fn draw_provides(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Box<dyn Error>> {
-    let pack = current_pack(&state);
+    let pack = current_pack(state);
     if pack.is_none() {
         return Ok(());
     }
