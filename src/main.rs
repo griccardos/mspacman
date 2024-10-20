@@ -641,7 +641,7 @@ fn draw_status(
     }
     let mut filters = vec![];
     if state.only_expl {
-        filters.push("ExplcityInstalled")
+        filters.push("ExplicitlyInstalled")
     }
     if state.only_foreign {
         filters.push("Foreign");
