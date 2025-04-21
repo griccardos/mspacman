@@ -1,20 +1,19 @@
 [package]
 name = "mspacman"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 license = "Apache-2.0"
 homepage = "https://github.com/griccardos/mspacman"
 repository = "https://github.com/griccardos/mspacman"
 readme = "readme.md"
 description = "pacman package dependency viewer"
-keywords = ["pacman","archlinux","arch","package"]
+keywords = ["pacman", "archlinux", "arch", "package"]
 authors = ["griccardos"]
 categories = ["command-line-utilities"]
 
 
-
 [dependencies]
-crossterm = "0.28.1"
-jiff = "0.1.13"
-ratatui = "0.28.1"
-tui-textarea = "0.6.1"
+crossterm = "0.28"
+jiff = "0.2"
+ratatui = "0.29"
+tui-textarea = "0.7"

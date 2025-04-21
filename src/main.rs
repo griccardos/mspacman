@@ -125,9 +125,11 @@ fn handle_event(
                     state.searching = false;
                     return Ok(EventResult::None);
                 }
+                KeyCode::Up | KeyCode::Down => {
+                    state.searching = false;
+                }
                 _ => {}
             }
-
             search_input.input(key);
             state.filter = search_input.lines().join(" ");
             update_filter(state);
@@ -529,7 +531,7 @@ fn draw_command(state: &mut AppState, f: &mut Frame) -> Result<(), Box<dyn Error
         .title("Run command on selection")
         .borders(Borders::ALL)
         .title_style(Color::Black)
-        .style(Style::default().bg(Color::Blue));
+        .style(Style::default().bg(Color::Blue).fg(Color::Black));
 
     //break up list of packages into lines, with a max length of block_width
     let mut lines = vec![];
@@ -550,7 +552,7 @@ fn draw_command(state: &mut AppState, f: &mut Frame) -> Result<(), Box<dyn Error
     para_lines.extend(
         lines
             .into_iter()
-            .map(|s| Line::from(s).style(Style::default().fg(Color::Yellow))),
+            .map(|s| Line::from(s).style(Style::default().fg(Color::Red))),
     );
     para_lines.extend(vec![
         "".into(),
@@ -578,7 +580,7 @@ fn draw_help(state: &mut AppState, f: &mut Frame) -> Result<(), Box<dyn Error>> 
 
     // Calculate the block size (1/3 of the screen size)
     let block_width = (size.width / 3).max(50);
-    let block_height = (size.height / 3).max(14);
+    let block_height = (size.height / 3).max(19);
 
     // Calculate the block position (centered)
     let block_x = (size.width - block_width) / 2;
@@ -588,7 +590,7 @@ fn draw_help(state: &mut AppState, f: &mut Frame) -> Result<(), Box<dyn Error>> 
     let block = Block::default()
         .title("Help")
         .borders(Borders::ALL)
-        .style(Style::default().bg(Color::Blue));
+        .style(Style::default().bg(Color::Blue).fg(Color::Black));
 
     // Create a paragraph to display inside the block
     let paragraph = Paragraph::new(vec![
@@ -603,6 +605,7 @@ fn draw_help(state: &mut AppState, f: &mut Frame) -> Result<(), Box<dyn Error>> 
         "[2-5]: Sort".into(),
         "Alt+[2-5]: Minimize Column".into(),
         "Enter (on outer columns): Goto Package".into(),
+        "Backspace: Go back".into(),
         "Left/Right: Switch column".into(),
         "Tab: Jump to provides tab".into(),
         "Esc: Clear filters and selection".into(),
@@ -801,7 +804,7 @@ fn draw_centre(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Bo
                 .collect::<Row>()
                 .style(Style::default().underlined().bold()),
         )
-        .highlight_style(sel_style);
+        .row_highlight_style(sel_style);
     let count = state.filtered.len();
     let local = state.filtered.iter().filter(|p| p.validated).count();
     let foreign = count - local;
@@ -855,7 +858,7 @@ fn draw_dependencies(
     } else {
         Style::default()
     };
-    let table = Table::new(rows, [Constraint::Min(0)]).highlight_style(style);
+    let table = Table::new(rows, [Constraint::Min(0)]).row_highlight_style(style);
     let block = Block::default()
         .title(format!("Depends on {count}"))
         .borders(Borders::all());
@@ -881,7 +884,7 @@ fn draw_dependents(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<()
         Style::default()
     };
 
-    let table = Table::new(rows, [Constraint::Min(0)]).highlight_style(style);
+    let table = Table::new(rows, [Constraint::Min(0)]).row_highlight_style(style);
     let block = Block::default()
         .title(format!("Required by {count}"))
         .borders(Borders::all());
@@ -909,7 +912,7 @@ fn draw_provides(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), 
     };
     state.message = "Prov".into();
 
-    let table = Table::new(rows, [Constraint::Min(0)]).highlight_style(style);
+    let table = Table::new(rows, [Constraint::Min(0)]).row_highlight_style(style);
     let block = Block::default()
         .title(format!("Provides {count}"))
         .borders(Borders::all());
@@ -923,7 +926,10 @@ fn pacman_exists() -> bool {
 }
 
 fn get_packs() -> Result<Vec<Package>, Box<dyn std::error::Error>> {
-    let output = Command::new("pacman").arg("-Qil").output()?;
+    let output = Command::new("pacman")
+        .env("LC_TIME", "C")
+        .arg("-Qil")
+        .output()?;
     let output = String::from_utf8(output.stdout)?;
     let mut packs: Vec<Package> = vec![];
     let mut pack = Package::default();
@@ -994,8 +1000,10 @@ fn get_packs() -> Result<Vec<Package>, Box<dyn std::error::Error>> {
 
 fn to_date(value: &str) -> String {
     //get rid of the timezone
-    let value = value.rsplit_once(' ').unwrap().0;
-    let time = jiff::fmt::strtime::parse("%a %d %b %Y %I:%M:%S %p", value).unwrap();
+    let time = match jiff::fmt::strtime::parse("%a %b %e %H:%M:%S %Y", value) {
+        Ok(time) => time,
+        Err(e) => panic!("Could not parse '{value}': {e}"),
+    };
     time.to_datetime().unwrap().to_string().replace("T", " ")
     //time.to_string("%Y-%m-%d %H:%M:%S").unwrap()
 }
