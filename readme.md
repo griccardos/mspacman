@@ -7,6 +7,9 @@ A simple tool to view dependencies of pacman installed packages in Arch linux an
 ## Install
 cargo install mspacman
 
+## Run
+$ ms
+
 
 ## Features
 - view dependencies of pacman installed packages
