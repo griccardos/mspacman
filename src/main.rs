@@ -102,16 +102,16 @@ fn get_textarea(label: &str) -> TextArea<'static> {
     textarea
 }
 
+fn clear_search(state: &mut AppState, textarea: &mut TextArea) {
+    textarea.select_all();
+    textarea.cut();
+    state.filter = String::new();
+    update_filter(state);
+}
 fn handle_event(
     state: &mut AppState,
     search_input: &mut TextArea,
 ) -> Result<EventResult, Box<dyn Error>> {
-    let clear_search = |state: &mut AppState, textarea: &mut TextArea| {
-        textarea.select_all();
-        textarea.cut();
-        state.filter = String::new();
-        update_filter(state);
-    };
     if let Event::Key(key) = event::read()? {
         //if searching, we handle input and return
         if state.searching {
@@ -205,7 +205,7 @@ fn handle_event(
                 KeyCode::End => safe_move(state, isize::MAX),
                 KeyCode::Left => cycle_focus_horiz(state, -1),
                 KeyCode::Right => cycle_focus_horiz(state, 1),
-                KeyCode::Enter => handle_enter(state),
+                KeyCode::Enter => handle_enter(state, search_input),
                 KeyCode::Tab => cycle_focus_vert(state),
                 KeyCode::Char(' ') => handle_select(state),
                 KeyCode::Backspace => {
@@ -396,7 +396,7 @@ fn handle_select(state: &mut AppState) {
     }
 }
 
-fn handle_enter(state: &mut AppState) {
+fn handle_enter(state: &mut AppState, search_input: &mut TextArea) {
     let pack = current_pack(state);
     if pack.is_none() {
         return;
@@ -417,11 +417,15 @@ fn handle_enter(state: &mut AppState) {
         Focus::Provides => return,
     };
 
+    let prevpack = current_pack(state).cloned();
     if let Some(pack) = get_pack(state, &name).cloned() {
         //undo any filters
+        state.searching = false;
+        clear_search(state, search_input);
         state.only_expl = false;
         state.filtered = state.packs.clone();
-        if let Some(prevpack) = current_pack(state) {
+
+        if let Some(prevpack) = prevpack {
             let prev = prevpack.name.clone();
             goto_package(state, &pack.name.clone());
             state.prev.push(prev);
@@ -639,8 +643,10 @@ fn draw_status(
     let sname = format!("Sort [{sname} {:?}]", state.sort_by.1);
     text.push(&sname);
 
+    let prev;
     if !state.prev.is_empty() {
-        text.push("BSP: Back");
+        prev = format!("BSP: Back to '{}'", state.prev.last().unwrap());
+        text.push(&prev);
     }
     let mut filters = vec![];
     if state.only_expl {
@@ -910,7 +916,6 @@ fn draw_provides(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), 
     } else {
         Style::default()
     };
-    state.message = "Prov".into();
 
     let table = Table::new(rows, [Constraint::Min(0)]).row_highlight_style(style);
     let block = Block::default()
