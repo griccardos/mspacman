@@ -1,6 +1,7 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Display};
 
 use ratatui::widgets::TableState;
+use tui_textarea::TextArea;
 
 #[derive(Debug, Default, Clone)]
 pub struct Package {
@@ -26,7 +27,8 @@ pub enum Reason {
 
 #[derive(Debug, Default)]
 pub struct AppState {
-    pub packs: Vec<Package>,
+    pub packages_installed: Vec<Package>,
+    pub packages_all: Vec<Package>,
     pub filtered: Vec<Package>,
     pub centre_table_state: TableState,
     pub left_table_state: TableState,
@@ -48,10 +50,52 @@ pub struct AppState {
     pub selected: Vec<String>,
     //for searching
     pub searching: bool,
+    pub search_input: TextArea<'static>,
     //for command
     pub command: String,
     pub show_command: bool,
+    pub tab: Tab,
+    //for showing all/installed
+    pub only_installed: bool,
 }
+
+#[derive(Debug, Default)]
+pub enum Tab {
+    #[default]
+    Installed,
+    Packages,
+}
+impl Tab {
+    pub fn values() -> Vec<String> {
+        vec![Tab::Installed.to_string(), Tab::Packages.to_string()]
+    }
+
+    pub(crate) fn next(&mut self) {
+        *self = match self {
+            Tab::Installed => Tab::Packages,
+            Tab::Packages => Tab::Installed,
+        };
+    }
+}
+impl Display for Tab {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Tab::Installed => write!(f, "Installed"),
+            Tab::Packages => write!(f, "Packages"),
+        }
+    }
+}
+
+//for select ratatui::Tabs
+impl From<&Tab> for Option<usize> {
+    fn from(tab: &Tab) -> Self {
+        match tab {
+            Tab::Installed => Some(0),
+            Tab::Packages => Some(1),
+        }
+    }
+}
+
 #[derive(Debug, Default, PartialEq, Clone, Copy)]
 pub enum Focus {
     Left,

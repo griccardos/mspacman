@@ -1,35 +1,25 @@
-pub mod structs;
-
-use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
-use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Offset, Rect},
-    style::{Color, Style, Stylize},
-    text::Line,
-    widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table},
-    DefaultTerminal, Frame,
-};
-use std::{collections::HashMap, error::Error, io::Write, process::Command};
-use structs::{AppState, EventResult, Focus, Package, Reason, Sort};
-use tui_textarea::TextArea;
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !pacman_exists() {
         println!("pacman is not installed");
         std::process::exit(1);
     }
 
-    let packs = get_packs()?;
-    let mut state = AppState {
-        filtered: packs.clone(),
-        packs,
+    let installed = get_installed_packages()?;
+    let all_packs = get_all_packages(&installed)?;
+
+    let state = AppState {
+        filtered: installed.clone(),
+        packages_installed: installed,
+        packages_all: all_packs,
         show_info: true,
         sort_by: (1, Sort::Asc),
         hide_columns: HashMap::from_iter([(2, false), (3, false), (4, false), (5, false)]),
+        search_input: get_textarea("Search..."),
+        left_table_state: TableState::default().with_selected(Some(0)),
+        centre_table_state: TableState::default().with_selected(Some(0)),
+        right_table_state: TableState::default().with_selected(Some(0)),
         ..Default::default()
     };
-    state.left_table_state.select(Some(0));
-    state.centre_table_state.select(Some(0));
-    state.right_table_state.select(Some(0));
 
     let mut terminal = ratatui::init();
     terminal.clear()?;
@@ -44,41 +34,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn run(terminal: &mut DefaultTerminal, mut state: AppState) -> Result<Vec<String>, Box<dyn Error>> {
-    let mut search_input = get_textarea("Search");
-
     loop {
         terminal.draw(|f| {
-            let info = if state.show_info { 6 } else { 0 };
-            let pr = if state.show_providing {
-                ((f.area().height as f32 * 0.5) as u16).max(5)
-            } else {
-                0
-            };
+            //draw_installed(&mut state, &mut search_input, f);
+            use Constraint::{Length, Min};
+            let vertical = Layout::vertical([Length(1), Min(0), Length(1)]);
+            let [header_area, inner_area, footer_area] = vertical.areas(f.area());
 
-            let top_bottom = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Percentage(100),
-                    Constraint::Min(info),
-                    Constraint::Min(pr),
-                    Constraint::Min(1),
-                ])
-                .split(f.area());
-            let body = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints(Constraint::from_percentages([20, 60, 20]))
-                .split(top_bottom[0]);
+            draw_tabs(&state, f, header_area);
+            match state.tab {
+                Tab::Installed => {
+                    state.only_installed = true;
+                    update_filter(&mut state);
+                    draw_packages(&mut state, f, inner_area);
+                }
+                Tab::Packages => {
+                    state.only_installed = false;
+                    update_filter(&mut state);
+                    draw_packages(&mut state, f, inner_area)
+                }
+            }
+            draw_status(&mut state, f, footer_area).unwrap();
 
-            draw_dependencies(&mut state, f, body[0]).unwrap();
-            draw_centre(&mut state, f, body[1]).unwrap();
-            draw_dependents(&mut state, f, body[2]).unwrap();
-            draw_info(&mut state, f, top_bottom[1]).unwrap();
-            draw_provides(&mut state, f, top_bottom[2]).unwrap();
-            draw_status(&mut state, f, top_bottom[3], &mut search_input).unwrap();
+            //overlays
             draw_help(&mut state, f).unwrap();
             draw_command(&mut state, f).unwrap();
         })?;
-        match handle_event(&mut state, &mut search_input)? {
+        match handle_event(&mut state)? {
             EventResult::None => {}
             EventResult::Quit => break,
             EventResult::Command(c) => {
@@ -94,6 +76,49 @@ fn run(terminal: &mut DefaultTerminal, mut state: AppState) -> Result<Vec<String
     Ok(state.selected)
 }
 
+fn draw_tabs(state: &AppState, f: &mut Frame<'_>, header_area: Rect) {
+    Tabs::new(Tab::values())
+        .highlight_style((Color::Black, Color::Yellow))
+        .select(&state.tab)
+        .render(header_area, f.buffer_mut());
+}
+
+fn draw_packages(state: &mut AppState, f: &mut Frame<'_>, area: Rect) {
+    let info = if state.show_info { 6 } else { 0 };
+    let pr = if state.show_providing {
+        ((area.height as f32 * 0.5) as u16).max(5)
+    } else {
+        0
+    };
+
+    let top_bottom = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(100),
+            Constraint::Min(info),
+            Constraint::Min(pr),
+            Constraint::Min(1),
+        ])
+        .split(area);
+    let vert_splits = if state.only_installed {
+        [20, 60, 20]
+    } else {
+        [20, 80, 0]
+    };
+    let body = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints(Constraint::from_percentages(vert_splits))
+        .split(top_bottom[0]);
+
+    draw_dependencies(state, f, body[0]).unwrap();
+    draw_centre(state, f, body[1]).unwrap();
+    if state.only_installed {
+        draw_dependents(state, f, body[2]).unwrap();
+    }
+    draw_info(state, f, top_bottom[1]).unwrap();
+    draw_provides(state, f, top_bottom[2]).unwrap();
+}
+
 fn get_textarea(label: &str) -> TextArea<'static> {
     let mut textarea = TextArea::default();
     textarea.set_placeholder_text(label);
@@ -102,23 +127,20 @@ fn get_textarea(label: &str) -> TextArea<'static> {
     textarea
 }
 
-fn clear_search(state: &mut AppState, textarea: &mut TextArea) {
-    textarea.select_all();
-    textarea.cut();
+fn clear_search(state: &mut AppState) {
+    state.search_input.select_all();
+    state.search_input.cut();
     state.filter = String::new();
     update_filter(state);
 }
-fn handle_event(
-    state: &mut AppState,
-    search_input: &mut TextArea,
-) -> Result<EventResult, Box<dyn Error>> {
+fn handle_event(state: &mut AppState) -> Result<EventResult, Box<dyn Error>> {
     if let Event::Key(key) = event::read()? {
         //if searching, we handle input and return
         if state.searching {
             match key.code {
                 KeyCode::Esc => {
                     state.searching = false;
-                    clear_search(state, search_input);
+                    clear_search(state);
                     return Ok(EventResult::None);
                 }
                 KeyCode::Enter => {
@@ -130,8 +152,8 @@ fn handle_event(
                 }
                 _ => {}
             }
-            search_input.input(key);
-            state.filter = search_input.lines().join(" ");
+            state.search_input.input(key);
+            state.filter = state.search_input.lines().join(" ");
             update_filter(state);
 
             return Ok(EventResult::None);
@@ -159,7 +181,7 @@ fn handle_event(
                     state.show_help = false;
                     state.show_command = false;
                     state.selected.clear();
-                    clear_search(state, search_input);
+                    clear_search(state);
                     update_filter(state);
                 }
                 KeyCode::Char('?') | KeyCode::Char('h') => state.show_help = !state.show_help,
@@ -176,7 +198,7 @@ fn handle_event(
                     if key.modifiers.contains(KeyModifiers::ALT) {
                         hide_column(state, val)
                     } else {
-                        sort_column(state, val)
+                        set_sort(state, val);
                     }
                 }
 
@@ -194,8 +216,8 @@ fn handle_event(
                     update_filter(state);
                 }
                 KeyCode::Char('i') => state.show_info = !state.show_info,
+                KeyCode::Char('P') => cycle_focus_vert(state),
                 KeyCode::Char('p') => state.show_providing = !state.show_providing,
-                KeyCode::Char('r') => state.packs = get_packs()?,
                 KeyCode::Char('/') => state.searching = true,
                 KeyCode::Down => safe_move(state, 1),
                 KeyCode::Up => safe_move(state, -1),
@@ -205,8 +227,8 @@ fn handle_event(
                 KeyCode::End => safe_move(state, isize::MAX),
                 KeyCode::Left => cycle_focus_horiz(state, -1),
                 KeyCode::Right => cycle_focus_horiz(state, 1),
-                KeyCode::Enter => handle_enter(state, search_input),
-                KeyCode::Tab => cycle_focus_vert(state),
+                KeyCode::Enter => handle_enter(state),
+                KeyCode::Tab => state.tab.next(),
                 KeyCode::Char(' ') => handle_select(state),
                 KeyCode::Backspace => {
                     if let Some(prev) = state.prev.pop() {
@@ -221,10 +243,10 @@ fn handle_event(
 }
 
 fn goto_screen(alternate: bool, terminal: &mut DefaultTerminal) -> Result<(), Box<dyn Error>> {
+    use crossterm::ExecutableCommand;
     use crossterm::terminal::EnterAlternateScreen;
     use crossterm::terminal::LeaveAlternateScreen;
     use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
-    use crossterm::ExecutableCommand;
     use std::io::stdout;
 
     if alternate {
@@ -269,17 +291,19 @@ fn run_command(state: &mut AppState, char: char) -> Result<(), Box<dyn Error>> {
         crossterm::event::read()?;
     };
 
-    let before = state.packs.len();
-    state.packs = get_packs()?;
+    let before = state.packages_installed.len();
+    state.packages_installed = get_installed_packages()?;
+    state.packages_all = get_all_packages(&state.packages_installed)?;
     update_filter(state);
-    state.message = format!("{}->{}", before, state.packs.len());
+    state.message = format!("{}->{}", before, state.packages_installed.len());
     Ok(())
 }
 
 fn hide_column(state: &mut AppState, arg: usize) {
     state.hide_columns.entry(arg).and_modify(|a| *a = !*a);
 }
-fn sort_column(state: &mut AppState, arg: usize) {
+
+fn set_sort(state: &mut AppState, arg: usize) {
     if state.sort_by.0 == arg {
         if state.sort_by.1 == Sort::Asc {
             state.sort_by.1 = Sort::Desc;
@@ -290,6 +314,8 @@ fn sort_column(state: &mut AppState, arg: usize) {
         state.sort_by.0 = arg;
         state.sort_by.1 = Sort::Asc;
     }
+}
+fn filtered_sort(state: &mut AppState) {
     let sort_col = state.sort_by.0;
     let sort_dir = state.sort_by.1;
 
@@ -345,8 +371,12 @@ fn sort_column(state: &mut AppState, arg: usize) {
 }
 
 fn update_filter(state: &mut AppState) {
-    state.filtered = state
-        .packs
+    let source = if state.only_installed {
+        &state.packages_installed
+    } else {
+        &state.packages_all
+    };
+    state.filtered = source
         .iter()
         .filter(|p| !state.only_expl || p.reason == Reason::Explicit) //only show explicit packages
         .filter(|p| !state.only_foreign || !p.validated) //only show foreign packages
@@ -373,9 +403,16 @@ fn update_filter(state: &mut AppState) {
             state.centre_table_state.select(Some(0));
         }
     }
-    state
-        .selected
-        .retain(|p| state.packs.iter().any(|f| f.name == *p));
+    if state.only_installed {
+        state
+            .selected
+            .retain(|p| state.packages_installed.iter().any(|f| f.name == *p));
+    } else {
+        state
+            .selected
+            .retain(|p| state.packages_all.iter().any(|f| f.name == *p));
+    }
+    filtered_sort(state);
 }
 
 fn handle_select(state: &mut AppState) {
@@ -396,7 +433,7 @@ fn handle_select(state: &mut AppState) {
     }
 }
 
-fn handle_enter(state: &mut AppState, search_input: &mut TextArea) {
+fn handle_enter(state: &mut AppState) {
     let pack = current_pack(state);
     if pack.is_none() {
         return;
@@ -421,9 +458,14 @@ fn handle_enter(state: &mut AppState, search_input: &mut TextArea) {
     if let Some(pack) = get_pack(state, &name).cloned() {
         //undo any filters
         state.searching = false;
-        clear_search(state, search_input);
+        clear_search(state);
         state.only_expl = false;
-        state.filtered = state.packs.clone();
+        state.filtered = if state.only_installed {
+            state.packages_installed.clone()
+        } else {
+            state.packages_all.clone()
+        };
+        update_filter(state);
 
         if let Some(prevpack) = prevpack {
             let prev = prevpack.name.clone();
@@ -439,6 +481,7 @@ fn goto_package(state: &mut AppState, name: &str) {
         .iter()
         .position(|p| p.name == name)
         .unwrap_or_default();
+
     state.focus = Focus::Centre;
     state.centre_table_state.select(Some(new_index));
 }
@@ -601,6 +644,7 @@ fn draw_help(state: &mut AppState, f: &mut Frame) -> Result<(), Box<dyn Error>> 
         "q: Quit".into(),
         "i: Info".into(),
         "p: Provides".into(),
+        "Shift+p: Switch focus to/from provides tab".into(),
         "d: Date".into(),
         "e: Explicitly installed only".into(),
         "f: Foreign packages only".into(),
@@ -611,7 +655,7 @@ fn draw_help(state: &mut AppState, f: &mut Frame) -> Result<(), Box<dyn Error>> 
         "Enter (on outer columns): Goto Package".into(),
         "Backspace: Go back".into(),
         "Left/Right: Switch column".into(),
-        "Tab: Jump to provides tab".into(),
+        "Tab: Next tab".into(),
         "Esc: Clear filters and selection".into(),
         "Space: Select/Deselect".into(),
         "c: Run command on selection".into(),
@@ -625,12 +669,7 @@ fn draw_help(state: &mut AppState, f: &mut Frame) -> Result<(), Box<dyn Error>> 
 
     Ok(())
 }
-fn draw_status(
-    state: &mut AppState,
-    f: &mut Frame,
-    rect: Rect,
-    textarea: &mut TextArea,
-) -> Result<(), Box<dyn Error>> {
+fn draw_status(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Box<dyn Error>> {
     let mut text = vec!["  ?: Help   "];
     let sname = match state.sort_by.0 {
         1 => "Name",
@@ -672,8 +711,9 @@ fn draw_status(
         text.push(&state.message);
     }
 
-    let search_len = if state.searching || !textarea.is_empty() {
-        textarea
+    let search_len = if state.searching || !state.search_input.is_empty() {
+        state
+            .search_input
             .lines()
             .first()
             .map(|l| l.len() + 1)
@@ -687,13 +727,17 @@ fn draw_status(
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(search_len), Constraint::Min(0)].as_ref())
         .split(rect);
-    if state.searching || !textarea.is_empty() {
+    if state.searching || !state.search_input.is_empty() {
         if state.searching {
-            textarea.set_cursor_style(Style::default().bg(Color::White));
+            state
+                .search_input
+                .set_cursor_style(Style::default().bg(Color::White));
         } else {
-            textarea.set_cursor_style(Style::default().bg(Color::Gray));
+            state
+                .search_input
+                .set_cursor_style(Style::default().bg(Color::Gray));
         }
-        f.render_widget(&*textarea, layout[0]);
+        f.render_widget(&state.search_input, layout[0]);
     }
 
     let para = Paragraph::new(text.join(" ")).style(Style::default().fg(Color::Yellow));
@@ -732,6 +776,9 @@ fn safe_move(state: &mut AppState, change: isize) {
                 .map(|s| (s + change as usize).min(len - 1)),
         );
     }
+    if state.show_providing {
+        ensure_has_provides(state);
+    }
 }
 
 fn current_pack(state: &AppState) -> Option<&Package> {
@@ -740,8 +787,11 @@ fn current_pack(state: &AppState) -> Option<&Package> {
         .get(state.centre_table_state.selected().unwrap_or_default())
 }
 fn get_pack<'a>(state: &'a AppState, name: &str) -> Option<&'a Package> {
-    let pack = state.packs.iter().find(|p| p.name == name);
-    pack
+    if state.only_installed {
+        state.packages_installed.iter().find(|p| p.name == name)
+    } else {
+        state.packages_all.iter().find(|p| p.name == name)
+    }
 }
 
 ///draws list, plus package info
@@ -760,9 +810,13 @@ fn draw_centre(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Bo
 
             let mut row = Row::from_iter(data);
             let mut style = Style::default();
-            if pack.reason == Reason::Explicit {
+            if state.only_installed && pack.reason == Reason::Explicit {
                 style = style.fg(Color::Green);
             }
+            if !state.only_installed && !pack.installed.is_empty() {
+                style = style.fg(Color::Green);
+            }
+
             if state.selected.contains(&pack.name) {
                 style = style.underlined();
             }
@@ -777,15 +831,29 @@ fn draw_centre(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Bo
     } else {
         Style::default().bg(Color::Gray).fg(Color::Black)
     };
-    let head = vec!["Name", "Reason", "ReqBy", "Foreign", "Installed"];
-
-    let mut widths = vec![
-        Constraint::Percentage(50),
-        Constraint::Percentage(15),
-        Constraint::Min(5),
-        Constraint::Min(3),
-        Constraint::Length(19),
-    ];
+    let (head, mut widths) = if state.only_installed {
+        (
+            vec!["Name", "Reason", "ReqBy", "Foreign", "Installed"],
+            vec![
+                Constraint::Percentage(50),
+                Constraint::Percentage(15),
+                Constraint::Min(5),
+                Constraint::Min(3),
+                Constraint::Length(19),
+            ],
+        )
+    } else {
+        (
+            vec!["Name", "Reason", "ReqBy", "Foreign", "Installed"],
+            vec![
+                Constraint::Percentage(50),
+                Constraint::Length(0),
+                Constraint::Length(0),
+                Constraint::Length(0),
+                Constraint::Length(19),
+            ],
+        )
+    };
 
     for (i, c) in widths.iter_mut().enumerate() {
         if let Some(v) = state.hide_columns.get(&(i + 1)) {
@@ -812,15 +880,27 @@ fn draw_centre(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Bo
         )
         .row_highlight_style(sel_style);
     let count = state.filtered.len();
-    let local = state.filtered.iter().filter(|p| p.validated).count();
-    let foreign = count - local;
-    let extra = if foreign > 0 {
-        format!(" ({local} pacman, {foreign} foreign)")
+    let title = if state.only_installed {
+        let local = state.filtered.iter().filter(|p| p.validated).count();
+        let foreign = count - local;
+        let extra = if foreign > 0 {
+            format!(" ({local} pacman, {foreign} foreign)")
+        } else {
+            "".to_string()
+        };
+
+        format!("Installed {count}{extra}")
     } else {
-        "".to_string()
+        let installed = state
+            .filtered
+            .iter()
+            .filter(|p| !p.installed.is_empty())
+            .count();
+
+        format!("Packages {count} ({installed} installed)")
     };
     let block = Block::default()
-        .title(format!("Installed {count}{extra}"))
+        .title(title)
         .title_bottom(if state.selected.is_empty() {
             "".to_string()
         } else {
@@ -899,7 +979,23 @@ fn draw_dependents(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<()
     Ok(())
 }
 
+fn get_provides(package: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let output = Command::new("pacman").arg("-Ql").arg(package).output()?;
+    let output = String::from_utf8(output.stdout)?;
+    Ok(output
+        .lines()
+        .filter_map(|line| {
+            if let Some((_, path)) = line.split_once(" ") {
+                Some(path.to_string())
+            } else {
+                None
+            }
+        })
+        .collect())
+}
+
 fn draw_provides(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Box<dyn Error>> {
+    ensure_has_provides(state);
     let pack = current_pack(state);
     if pack.is_none() {
         return Ok(());
@@ -926,14 +1022,36 @@ fn draw_provides(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), 
     Ok(())
 }
 
+fn ensure_has_provides(state: &mut AppState) {
+    let mut name = None;
+    let mut provides = None;
+    let curr = current_pack(state);
+    if let Some(pack) = curr {
+        if pack.provides.is_empty() {
+            if let Ok(prov) = get_provides(&pack.name) {
+                name = Some(pack.name.clone());
+                provides = Some(prov);
+            }
+        }
+    }
+    if let (Some(name), Some(provides)) = (name, provides) {
+        if let Some(pack) = state.packages_installed.iter_mut().find(|p| p.name == name) {
+            pack.provides = provides.clone();
+        }
+        if let Some(pack) = state.packages_all.iter_mut().find(|p| p.name == name) {
+            pack.provides = provides;
+        }
+    }
+}
+
 fn pacman_exists() -> bool {
     Command::new("pacman").output().is_ok()
 }
 
-fn get_packs() -> Result<Vec<Package>, Box<dyn std::error::Error>> {
+fn get_packages_command(command: &str) -> Result<Vec<Package>, Box<dyn std::error::Error>> {
     let output = Command::new("pacman")
         .env("LC_TIME", "C")
-        .arg("-Qil")
+        .arg(command)
         .output()?;
     let output = String::from_utf8(output.stdout)?;
     let mut packs: Vec<Package> = vec![];
@@ -1000,7 +1118,26 @@ fn get_packs() -> Result<Vec<Package>, Box<dyn std::error::Error>> {
         }
     }
     packs.push(pack);
+
     Ok(packs)
+}
+
+fn get_all_packages(installed: &[Package]) -> Result<Vec<Package>, Box<dyn std::error::Error>> {
+    let mut packs = get_packages_command("-Si")?;
+    let map = installed
+        .iter()
+        .map(|p| (p.name.clone(), p.installed.clone()))
+        .collect::<std::collections::HashMap<_, _>>();
+    //now update installed status
+    for pack in packs.iter_mut() {
+        if map.contains_key(&pack.name) {
+            pack.installed = map[&pack.name].clone();
+        }
+    }
+    Ok(packs)
+}
+fn get_installed_packages() -> Result<Vec<Package>, Box<dyn std::error::Error>> {
+    get_packages_command("-Qi")
 }
 
 fn to_date(value: &str) -> String {
@@ -1012,3 +1149,19 @@ fn to_date(value: &str) -> String {
     time.to_datetime().unwrap().to_string().replace("T", " ")
     //time.to_string("%Y-%m-%d %H:%M:%S").unwrap()
 }
+
+pub mod structs;
+
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use ratatui::{
+    DefaultTerminal, Frame,
+    layout::{Alignment, Constraint, Direction, Layout, Offset, Rect},
+    style::{Color, Style, Stylize},
+    text::Line,
+    widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, TableState, Tabs, Widget},
+};
+use std::{collections::HashMap, error::Error, io::Write, process::Command};
+use structs::{AppState, EventResult, Focus, Package, Reason, Sort};
+use tui_textarea::TextArea;
+
+use crate::structs::Tab;
