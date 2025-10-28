@@ -6,11 +6,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let installed = get_installed_packages()?;
     let all_packs = get_all_packages(&installed)?;
+    let updates = get_updates()?;
 
     let state = AppState {
         filtered: installed.clone(),
         packages_installed: installed,
         packages_all: all_packs,
+        packages_updates: updates,
         show_info: true,
         sort_by: (1, Sort::Asc),
         hide_columns: HashMap::from_iter([(2, false), (3, false), (4, false), (5, false)]),
@@ -53,6 +55,7 @@ fn run(terminal: &mut DefaultTerminal, mut state: AppState) -> Result<Vec<String
                     update_filter(&mut state);
                     draw_packages(&mut state, f, inner_area)
                 }
+                Tab::Updates => draw_updates(&mut state, f, inner_area),
             }
             draw_status(&mut state, f, footer_area).unwrap();
 
@@ -60,20 +63,31 @@ fn run(terminal: &mut DefaultTerminal, mut state: AppState) -> Result<Vec<String
             draw_help(&mut state, f).unwrap();
             draw_command(&mut state, f).unwrap();
         })?;
-        match handle_event(&mut state)? {
-            EventResult::None => {}
-            EventResult::Quit => break,
-            EventResult::Command(c) => {
-                let _ = goto_screen(false, terminal);
-                let res = run_command(&mut state, c);
-                let _ = goto_screen(true, terminal);
-                if let Err(e) = res {
-                    state.message = e.to_string();
+
+        let ev = handle_event(&mut state)?;
+        let evs = match ev {
+            EventResult::Queue(event_results) => event_results,
+            _ => vec![ev],
+        };
+        for ev in evs {
+            match ev {
+                EventResult::None => {}
+                EventResult::Quit => return Ok(state.selected),
+                EventResult::Select(names) => {
+                    state.selected = names;
                 }
+                EventResult::Command(c) => {
+                    let _ = goto_screen(false, terminal);
+                    let res = run_command(&mut state, c);
+                    let _ = goto_screen(true, terminal);
+                    if let Err(e) = res {
+                        state.message = e.to_string();
+                    }
+                }
+                EventResult::Queue(_) => unreachable!(),
             }
         }
     }
-    Ok(state.selected)
 }
 
 fn draw_tabs(state: &AppState, f: &mut Frame<'_>, header_area: Rect) {
@@ -81,6 +95,11 @@ fn draw_tabs(state: &AppState, f: &mut Frame<'_>, header_area: Rect) {
         .highlight_style((Color::Black, Color::Yellow))
         .select(&state.tab)
         .render(header_area, f.buffer_mut());
+}
+
+fn draw_updates(state: &mut AppState, f: &mut Frame<'_>, area: Rect) {
+    state.update_widget.set_data(&state.packages_updates);
+    state.update_widget.clone().render(area, f.buffer_mut());
 }
 
 fn draw_packages(state: &mut AppState, f: &mut Frame<'_>, area: Rect) {
@@ -135,6 +154,60 @@ fn clear_search(state: &mut AppState) {
 }
 fn handle_event(state: &mut AppState) -> Result<EventResult, Box<dyn Error>> {
     if let Event::Key(key) = event::read()? {
+        //global key handling
+        if key.kind == KeyEventKind::Press {
+            match key.code {
+                KeyCode::Char('?') => {
+                    state.show_help = !state.show_help;
+                    if state.show_help {
+                        state.focus_previous = state.focus;
+                        state.focus = Focus::Help;
+                    } else {
+                        state.focus = state.focus_previous;
+                    }
+
+                    return Ok(EventResult::None);
+                }
+                KeyCode::Char('q') => return Ok(EventResult::Quit),
+                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    state.selected.clear();
+                    return Ok(EventResult::Quit);
+                }
+                KeyCode::Tab | KeyCode::Char('l') => {
+                    state.tab.cycle_next();
+                    state.focus = match state.tab {
+                        Tab::Installed => Focus::Centre,
+                        Tab::Packages => Focus::Centre,
+                        Tab::Updates => Focus::Updates,
+                    };
+                    return Ok(EventResult::None);
+                }
+                KeyCode::Char('h') => {
+                    state.tab.cycle_prev();
+                    state.focus = match state.tab {
+                        Tab::Installed => Focus::Centre,
+                        Tab::Packages => Focus::Centre,
+                        Tab::Updates => Focus::Updates,
+                    };
+                    return Ok(EventResult::None);
+                }
+                _ => {}
+            }
+        }
+
+        match state.focus {
+            Focus::Left => {}
+            Focus::Centre => {}
+            Focus::Right => {}
+            Focus::Provides => {}
+            Focus::Updates => {
+                return state.update_widget.handle_key_event(&key);
+            }
+            Focus::Help => {
+                //cannot do other ops in help
+                return Ok(EventResult::None);
+            }
+        }
         //if searching, we handle input and return
         if state.searching {
             match key.code {
@@ -162,9 +235,15 @@ fn handle_event(state: &mut AppState) -> Result<EventResult, Box<dyn Error>> {
         if state.show_command {
             state.show_command = false;
             match key.code {
-                KeyCode::Char('r') => return Ok(EventResult::Command('r')),
-                KeyCode::Char('q') => return Ok(EventResult::Command('q')),
-                KeyCode::Char('s') => return Ok(EventResult::Command('s')),
+                KeyCode::Char('r') => {
+                    return Ok(EventResult::Command(EventCommand::RemoveSelected));
+                }
+                KeyCode::Char('q') => {
+                    return Ok(EventResult::Command(EventCommand::QuerySelected));
+                }
+                KeyCode::Char('s') => {
+                    return Ok(EventResult::Command(EventCommand::SyncUpdateSelected));
+                }
                 _ => {}
             }
 
@@ -173,7 +252,6 @@ fn handle_event(state: &mut AppState) -> Result<EventResult, Box<dyn Error>> {
 
         if key.kind == KeyEventKind::Press {
             match key.code {
-                KeyCode::Char('q') => return Ok(EventResult::Quit),
                 KeyCode::Esc => {
                     state.only_expl = false;
                     state.only_foreign = false;
@@ -184,14 +262,9 @@ fn handle_event(state: &mut AppState) -> Result<EventResult, Box<dyn Error>> {
                     clear_search(state);
                     update_filter(state);
                 }
-                KeyCode::Char('?') | KeyCode::Char('h') => state.show_help = !state.show_help,
-                KeyCode::Char('c') => {
-                    if key.modifiers.contains(KeyModifiers::CONTROL) {
-                        state.selected.clear();
-                        return Ok(EventResult::Quit);
-                    } else if !state.selected.is_empty() {
-                        state.show_command = true;
-                    }
+
+                KeyCode::Char('c') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    state.show_command = true;
                 }
                 KeyCode::Char(val) if ('1'..='5').contains(&val) => {
                     let val = val.to_digit(10).unwrap() as usize;
@@ -219,8 +292,8 @@ fn handle_event(state: &mut AppState) -> Result<EventResult, Box<dyn Error>> {
                 KeyCode::Char('P') => cycle_focus_vert(state),
                 KeyCode::Char('p') => state.show_providing = !state.show_providing,
                 KeyCode::Char('/') => state.searching = true,
-                KeyCode::Down => safe_move(state, 1),
-                KeyCode::Up => safe_move(state, -1),
+                KeyCode::Down | KeyCode::Char('j') => safe_move(state, 1),
+                KeyCode::Up | KeyCode::Char('k') => safe_move(state, -1),
                 KeyCode::PageDown => safe_move(state, 10),
                 KeyCode::PageUp => safe_move(state, -10),
                 KeyCode::Home => safe_move(state, -isize::MAX),
@@ -228,7 +301,7 @@ fn handle_event(state: &mut AppState) -> Result<EventResult, Box<dyn Error>> {
                 KeyCode::Left => cycle_focus_horiz(state, -1),
                 KeyCode::Right => cycle_focus_horiz(state, 1),
                 KeyCode::Enter => handle_enter(state),
-                KeyCode::Tab => state.tab.next(),
+
                 KeyCode::Char(' ') => handle_select(state),
                 KeyCode::Backspace => {
                     if let Some(prev) = state.prev.pop() {
@@ -260,19 +333,21 @@ fn goto_screen(alternate: bool, terminal: &mut DefaultTerminal) -> Result<(), Bo
     Ok(())
 }
 
-fn run_command(state: &mut AppState, char: char) -> Result<(), Box<dyn Error>> {
+fn run_command(state: &mut AppState, command: EventCommand) -> Result<(), Box<dyn Error>> {
     if state.selected.is_empty() {
         return Ok(());
     }
-    let comm_arg = match char {
-        'r' => Some(("pacman", vec!["-R"])),
-        'q' => Some(("pacman", vec!["-Qi"])),
-        's' => Some(("pacman", vec!["-S"])),
-        _ => None,
+    let comm_arg = match command {
+        EventCommand::RemoveSelected => Some(("pacman", vec!["-R"])),
+        EventCommand::SyncUpdateSelected => Some(("pacman", vec!["-S"])),
+        EventCommand::QuerySelected => Some(("pacman", vec!["-Qi"])),
     };
+
     if let Some((comm, mut args)) = comm_arg {
         args.extend(state.selected.iter().map(|a| a.as_str()));
 
+        std::io::stdout()
+            .write_all(format!("\nRunning command: {} {}\n", comm, args.join(" ")).as_bytes())?;
         //try run command as is
         let res = Command::new(comm).args(&args).status()?;
 
@@ -294,6 +369,8 @@ fn run_command(state: &mut AppState, char: char) -> Result<(), Box<dyn Error>> {
     let before = state.packages_installed.len();
     state.packages_installed = get_installed_packages()?;
     state.packages_all = get_all_packages(&state.packages_installed)?;
+    state.packages_updates = get_updates()?;
+
     update_filter(state);
     state.message = format!("{}->{}", before, state.packages_installed.len());
     Ok(())
@@ -452,6 +529,8 @@ fn handle_enter(state: &mut AppState) {
             .cloned()
             .unwrap_or_default(),
         Focus::Provides => return,
+        Focus::Updates => return,
+        Focus::Help => return,
     };
 
     let prevpack = current_pack(state).cloned();
@@ -530,9 +609,8 @@ fn cycle_focus_horiz(state: &mut AppState, arg: i32) {
     };
     match state.focus {
         Focus::Left => state.left_table_state.select(Some(0)),
-        Focus::Centre => {}
         Focus::Right => state.right_table_state.select(Some(0)),
-        Focus::Provides => {}
+        _ => {}
     }
 }
 
@@ -627,7 +705,7 @@ fn draw_help(state: &mut AppState, f: &mut Frame) -> Result<(), Box<dyn Error>> 
 
     // Calculate the block size (1/3 of the screen size)
     let block_width = (size.width / 3).max(50);
-    let block_height = (size.height / 3).max(19);
+    let block_height = (size.height / 3).max(22);
 
     // Calculate the block position (centered)
     let block_x = (size.width - block_width) / 2;
@@ -641,6 +719,7 @@ fn draw_help(state: &mut AppState, f: &mut Frame) -> Result<(), Box<dyn Error>> 
 
     // Create a paragraph to display inside the block
     let paragraph = Paragraph::new(vec![
+        "?: Toggle Help".into(),
         "q: Quit".into(),
         "i: Info".into(),
         "p: Provides".into(),
@@ -755,12 +834,14 @@ fn safe_move(state: &mut AppState, change: isize) {
         Focus::Centre => state.filtered.len(),
         Focus::Right => pack.required_by.len(),
         Focus::Provides => pack.provides.len(),
+        _ => return,
     };
     let tstate = match state.focus {
         Focus::Left => &mut state.left_table_state,
         Focus::Centre => &mut state.centre_table_state,
         Focus::Right => &mut state.right_table_state,
         Focus::Provides => &mut state.provides_table_state,
+        _ => return,
     };
 
     if change < 0 {
@@ -1140,6 +1221,29 @@ fn get_installed_packages() -> Result<Vec<Package>, Box<dyn std::error::Error>> 
     get_packages_command("-Qi")
 }
 
+fn get_updates() -> Result<Vec<PackageUpdate>, Box<dyn std::error::Error>> {
+    let output = Command::new("pacman")
+        .env("LC_TIME", "C")
+        .arg("-Qu")
+        .output()?;
+    let output = String::from_utf8(output.stdout)?;
+    let mut updates: Vec<PackageUpdate> = vec![];
+    for line in output.lines() {
+        let line = line.replace(" -> ", " ");
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() == 3 {
+            updates.push(PackageUpdate {
+                name: parts[0].to_string(),
+                current_version: parts[1].to_string(),
+                new_version: parts[2].to_string(),
+                change_type: change_type(parts[1], parts[2]),
+            });
+        }
+    }
+
+    Ok(updates)
+}
+
 fn to_date(value: &str) -> String {
     //get rid of the timezone
     let time = match jiff::fmt::strtime::parse("%a %b %e %H:%M:%S %Y", value) {
@@ -1151,6 +1255,8 @@ fn to_date(value: &str) -> String {
 }
 
 pub mod structs;
+pub mod version;
+pub mod widgets;
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::{
@@ -1164,4 +1270,7 @@ use std::{collections::HashMap, error::Error, io::Write, process::Command};
 use structs::{AppState, EventResult, Focus, Package, Reason, Sort};
 use tui_textarea::TextArea;
 
-use crate::structs::Tab;
+use crate::{
+    structs::{EventCommand, PackageUpdate, Tab},
+    version::change_type,
+};
