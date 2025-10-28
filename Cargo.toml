@@ -18,6 +18,7 @@ path = "src/main.rs"
 
 [dependencies]
 crossterm = "0.28"   #cannot upgrade until tui-textarea supports it
-jiff = "0.2"
+jiff = "0.2"         #for dates
 ratatui = "0.29"
-tui-textarea = "0.7"
+tui-textarea = "0.7" #for text input
+regex = "1.12"       #for natural sorting

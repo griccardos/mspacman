@@ -163,4 +163,5 @@ pub enum EventCommand {
     RemoveSelected,
     SyncUpdateSelected,
     QuerySelected,
+    UpdateDatabase,
 }

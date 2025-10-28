@@ -20,6 +20,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         left_table_state: TableState::default().with_selected(Some(0)),
         centre_table_state: TableState::default().with_selected(Some(0)),
         right_table_state: TableState::default().with_selected(Some(0)),
+        update_widget: UpdateWidget::new(),
         ..Default::default()
     };
 
@@ -40,7 +41,7 @@ fn run(terminal: &mut DefaultTerminal, mut state: AppState) -> Result<Vec<String
         terminal.draw(|f| {
             //draw_installed(&mut state, &mut search_input, f);
             use Constraint::{Length, Min};
-            let vertical = Layout::vertical([Length(1), Min(0), Length(1)]);
+            let vertical = Layout::vertical([Length(3), Min(0), Length(1)]);
             let [header_area, inner_area, footer_area] = vertical.areas(f.area());
 
             draw_tabs(&state, f, header_area);
@@ -77,11 +78,14 @@ fn run(terminal: &mut DefaultTerminal, mut state: AppState) -> Result<Vec<String
                     state.selected = names;
                 }
                 EventResult::Command(c) => {
+                    state.message = format!("Running command...");
                     let _ = goto_screen(false, terminal);
                     let res = run_command(&mut state, c);
                     let _ = goto_screen(true, terminal);
                     if let Err(e) = res {
                         state.message = e.to_string();
+                    } else {
+                        state.message = format!("Command completed.");
                     }
                 }
                 EventResult::Queue(_) => unreachable!(),
@@ -94,6 +98,7 @@ fn draw_tabs(state: &AppState, f: &mut Frame<'_>, header_area: Rect) {
     Tabs::new(Tab::values())
         .highlight_style((Color::Black, Color::Yellow))
         .select(&state.tab)
+        .block(Block::bordered())
         .render(header_area, f.buffer_mut());
 }
 
@@ -334,45 +339,56 @@ fn goto_screen(alternate: bool, terminal: &mut DefaultTerminal) -> Result<(), Bo
 }
 
 fn run_command(state: &mut AppState, command: EventCommand) -> Result<(), Box<dyn Error>> {
-    if state.selected.is_empty() {
-        return Ok(());
+    let (comm, mut args, needs_package_list) = match command {
+        EventCommand::RemoveSelected => ("pacman", vec!["-R"], true),
+        EventCommand::SyncUpdateSelected => ("pacman", vec!["-S"], true),
+        EventCommand::QuerySelected => ("pacman", vec!["-Qi"], true),
+        EventCommand::UpdateDatabase => ("pacman", vec!["-Sy"], false),
+    };
+    if needs_package_list && state.selected.is_empty() {
+        return Err(String::from("No packages selected").into());
     }
-    let comm_arg = match command {
-        EventCommand::RemoveSelected => Some(("pacman", vec!["-R"])),
-        EventCommand::SyncUpdateSelected => Some(("pacman", vec!["-S"])),
-        EventCommand::QuerySelected => Some(("pacman", vec!["-Qi"])),
-    };
 
-    if let Some((comm, mut args)) = comm_arg {
-        args.extend(state.selected.iter().map(|a| a.as_str()));
+    args.extend(state.selected.iter().map(|a| a.as_str()));
 
-        std::io::stdout()
-            .write_all(format!("\nRunning command: {} {}\n", comm, args.join(" ")).as_bytes())?;
-        //try run command as is
-        let res = Command::new(comm).args(&args).status()?;
+    std::io::stdout()
+        .write_all(format!("\nRunning command: {} {}\n", comm, args.join(" ")).as_bytes())?;
+    //try run command as is
+    let res = Command::new(comm).args(&args).status()?;
 
+    if !res.success() {
+        std::io::stdout().write_all("running sudo\n".as_bytes())?;
+        //run as sudo
+        args.insert(0, comm);
+        args.insert(0, "-S"); //for sudo
+        let res = Command::new("sudo").args(&args).status()?;
         if !res.success() {
-            std::io::stdout().write_all("running sudo\n".as_bytes())?;
-            //run as sudo
-            args.insert(0, comm);
-            args.insert(0, "-S");
-            let res = Command::new("sudo").args(&args).status()?;
-            if !res.success() {
-                std::io::stdout().write_all("Failed to run command".as_bytes())?;
-            }
+            std::io::stdout().write_all("Failed to run command".as_bytes())?;
         }
-        std::io::stdout().write_all("\nPress enter to continue...".as_bytes())?;
-        std::io::stdout().flush()?;
-        crossterm::event::read()?;
-    };
+    }
+    std::io::stdout().write_all("\nPress enter to continue...".as_bytes())?;
+    std::io::stdout().flush()?;
+    crossterm::event::read()?;
 
-    let before = state.packages_installed.len();
+    let before = (
+        state.packages_installed.len(),
+        state.packages_all.len(),
+        state.packages_updates.len(),
+    );
     state.packages_installed = get_installed_packages()?;
     state.packages_all = get_all_packages(&state.packages_installed)?;
     state.packages_updates = get_updates()?;
 
     update_filter(state);
-    state.message = format!("{}->{}", before, state.packages_installed.len());
+    state.message = format!(
+        "{:?}->{:?}",
+        before,
+        (
+            state.packages_installed.len(),
+            state.packages_all.len(),
+            state.packages_updates.len()
+        )
+    );
     Ok(())
 }
 
@@ -750,6 +766,7 @@ fn draw_help(state: &mut AppState, f: &mut Frame) -> Result<(), Box<dyn Error>> 
 }
 fn draw_status(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Box<dyn Error>> {
     let mut text = vec!["  ?: Help   "];
+
     let sname = match state.sort_by.0 {
         1 => "Name",
         2 => "Reason",
@@ -759,7 +776,9 @@ fn draw_status(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Bo
         _ => "",
     };
     let sname = format!("Sort [{sname} {:?}]", state.sort_by.1);
-    text.push(&sname);
+    if state.focus == Focus::Centre {
+        text.push(&sname);
+    }
 
     let prev;
     if !state.prev.is_empty() {
@@ -789,6 +808,9 @@ fn draw_status(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Bo
     if !state.message.is_empty() {
         text.push(&state.message);
     }
+    //temp
+    let foc = format!("Focus: {:?}", state.focus);
+    text.push(&foc);
 
     let search_len = if state.searching || !state.search_input.is_empty() {
         state
@@ -1273,4 +1295,5 @@ use tui_textarea::TextArea;
 use crate::{
     structs::{EventCommand, PackageUpdate, Tab},
     version::change_type,
+    widgets::update::UpdateWidget,
 };

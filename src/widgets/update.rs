@@ -1,15 +1,15 @@
 use std::{collections::HashMap, error::Error};
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     layout::{Constraint, Direction, Layout},
-    style::{Color, Style, Stylize},
-    widgets::{List, Row, StatefulWidget, Table, TableState, Widget},
+    widgets::{List, Widget},
 };
 
 use crate::{
     structs::{EventCommand, EventResult, PackageUpdate},
     version::ChangeType,
+    widgets::table::TableWidget,
 };
 
 ///Keep state inside the widget. Need to store in your app state
@@ -17,14 +17,27 @@ use crate::{
 pub struct UpdateWidget {
     data: Vec<PackageUpdate>,
     filtered: Vec<PackageUpdate>,
-    pub(crate) table_state: TableState,
+    table: TableWidget,
 }
 impl UpdateWidget {
     pub fn new() -> Self {
         Self {
             data: vec![],
             filtered: vec![],
-            table_state: TableState::default(),
+            table: TableWidget::new(
+                vec![
+                    "Name".to_string(),
+                    "Installed".to_string(),
+                    "Latest".to_string(),
+                    "Type".to_string(),
+                ],
+                vec![
+                    Constraint::Percentage(40),
+                    Constraint::Length(20),
+                    Constraint::Length(20),
+                    Constraint::Length(20),
+                ],
+            ),
         }
     }
     pub fn set_data(&mut self, data: &[PackageUpdate]) {
@@ -33,9 +46,22 @@ impl UpdateWidget {
         }
         self.data = data.iter().cloned().collect();
         self.filtered = self.data.clone();
-        if !self.filtered.is_empty() {
-            self.table_state.select(Some(0));
-        }
+        self.set_table_data();
+    }
+    pub fn set_table_data(&mut self) {
+        self.table.set_data(
+            self.filtered
+                .iter()
+                .map(|r| {
+                    vec![
+                        r.name.clone(),
+                        r.current_version.clone(),
+                        r.new_version.clone(),
+                        format!("{:?}", r.change_type),
+                    ]
+                })
+                .collect(),
+        );
     }
     pub fn set_filter(&mut self, filter: Option<ChangeType>) {
         match filter {
@@ -51,30 +77,7 @@ impl UpdateWidget {
                 self.filtered = self.data.clone();
             }
         }
-    }
-    pub fn up(&mut self) {
-        if self.filtered.is_empty() {
-            self.table_state.select(None);
-            return;
-        }
-        if let Some(selected) = self.table_state.selected() {
-            let new_selected = if selected == 0 { 0 } else { selected - 1 };
-            self.table_state.select(Some(new_selected));
-        } else {
-            self.table_state.select(Some(0));
-        }
-    }
-    pub fn down(&mut self) {
-        if self.filtered.is_empty() {
-            self.table_state.select(None);
-            return;
-        }
-        if let Some(selected) = self.table_state.selected() {
-            let new_selected = (selected + 1).min(self.filtered.len() - 1);
-            self.table_state.select(Some(new_selected));
-        } else {
-            self.table_state.select(Some(0));
-        }
+        self.set_table_data();
     }
 
     pub(crate) fn handle_key_event(
@@ -82,30 +85,40 @@ impl UpdateWidget {
         key: &KeyEvent,
     ) -> Result<EventResult, Box<dyn Error>> {
         match key.code {
-            KeyCode::Char('s') => {
+            KeyCode::Char('s') => return Ok(EventResult::Command(EventCommand::UpdateDatabase)),
+            KeyCode::Char('u') => {
+                let selected = self.table.get_selected_indices();
+                let selected_names = selected
+                    .iter()
+                    .filter_map(|&i| self.filtered.get(i))
+                    .map(|u| u.name.clone())
+                    .collect::<Vec<String>>();
                 return Ok(EventResult::Queue(vec![
                     //select all visible updates
-                    EventResult::Select(self.filtered.iter().map(|u| u.name.clone()).collect()),
+                    EventResult::Select(selected_names),
                     //sync selected updates
                     EventResult::Command(EventCommand::SyncUpdateSelected),
                 ]));
             }
-            KeyCode::Char('a') => self.set_filter(None),
+            KeyCode::Char('a') => {
+                if key.modifiers.contains(KeyModifiers::CONTROL) {
+                    self.table.select_all();
+                } else {
+                    self.set_filter(None);
+                }
+            }
+
             KeyCode::Char('m') => {
                 self.set_filter(Some(ChangeType::Major));
             }
             KeyCode::Char('n') => {
                 self.set_filter(Some(ChangeType::Minor));
             }
-            KeyCode::Up | KeyCode::Char('k') => {
-                self.up();
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                self.down();
-            }
+            KeyCode::Esc => self.table.clear_selection(),
 
             _ => {}
         }
+        self.table.handle_key_event(key)?;
 
         Ok(EventResult::None)
     }
@@ -122,51 +135,50 @@ impl Widget for UpdateWidget {
             .map(|(k, v)| (k.clone(), *v))
             .collect::<Vec<(ChangeType, usize)>>();
         counts.sort_by_key(|k| k.0.clone());
-        let mut counts = counts
+        counts.reverse();
+        let counts = counts
             .iter()
-            .map(|(k, v)| format!("{:?}: {}", k, v))
+            .map(|(k, v)| format!("{} {}", v, k))
             .collect::<Vec<String>>();
-        counts.insert(0, format!("Total: {}", self.data.len()));
-        let commands = vec![
-            "s: Update visible".to_string(),
-            "a: Show all".to_string(),
+        let selected = self.table.get_selected_indices().len();
+
+        let message = format!(
+            "{} Updates ({}) {}",
+            self.data.len(),
+            counts
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<&str>>()
+                .join(", "),
+            if selected > 0 {
+                format!("{} selected", selected)
+            } else {
+                "".to_string()
+            }
+        );
+        let mut commands = vec![
+            "s: Update database".to_string(),
+            "u: Update selected packages".to_string(),
             "m: Show major changes and up".to_string(),
             "n: Show minor changes and up".to_string(),
+            "a: Show all".to_string(),
+            "Ctrl+a: Select All".to_string(),
+            "ESC: Clear Selection".to_string(),
         ];
+        commands.push(message);
 
         let top_bottom = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Min((commands.len() + counts.len()) as u16),
+                Constraint::Min((commands.len()) as u16),
                 Constraint::Percentage(100),
             ])
             .split(area);
 
         let all = commands.iter().chain(counts.iter()).map(|s| s.as_str());
-        let list = List::new(all).highlight_symbol(">");
+        let list = List::new(all);
 
-        let table = Table::new(
-            self.filtered.into_iter().map(|r| {
-                Row::new(vec![
-                    r.name,
-                    r.current_version,
-                    r.new_version,
-                    format!("{:?}", r.change_type),
-                ])
-            }),
-            [
-                Constraint::Percentage(40),
-                Constraint::Length(20),
-                Constraint::Length(20),
-                Constraint::Length(20),
-            ],
-        )
-        .header(
-            Row::new(vec!["Name", "Installed", "Latest", "Type"])
-                .style(Style::default().underlined().bold()),
-        )
-        .row_highlight_style(Style::new().bg(Color::Yellow));
         <List as Widget>::render(list, top_bottom[0], buf);
-        <Table as StatefulWidget>::render(table, top_bottom[1], buf, &mut self.table_state.clone());
+        self.table.render(top_bottom[1], buf);
     }
 }
