@@ -1,9 +1,11 @@
-use std::{collections::HashMap, fmt::Display};
+use std::fmt::Display;
 
-use ratatui::widgets::TableState;
-use tui_textarea::TextArea;
+use ratatui::layout::Constraint;
 
-use crate::{version::ChangeType, widgets::update::UpdateWidget};
+use crate::{
+    version::ChangeType,
+    widgets::{table::TableWidget, update::UpdateWidget},
+};
 
 #[derive(Debug, Default, Clone)]
 pub struct Package {
@@ -41,37 +43,99 @@ pub struct AppState {
     pub packages_installed: Vec<Package>,
     pub packages_all: Vec<Package>,
     pub packages_updates: Vec<PackageUpdate>,
-    pub filtered: Vec<Package>,
-    pub centre_table_state: TableState,
-    pub left_table_state: TableState,
-    pub right_table_state: TableState,
-    pub provides_table_state: TableState,
-    pub focus: Focus,
-    pub focus_previous: Focus,
-    pub sort: Sort,
+    pub left_table: TableWidget,
+    pub right_table: TableWidget,
+    pub provides_table: TableWidget,
+    focus: Focus,
+    focus_previous: Focus,
     pub prev: Vec<String>,
     pub only_expl: bool,
     pub only_foreign: bool,
     pub only_orphans: bool,
-    pub filter: String,
     pub show_info: bool,
-    pub show_help: bool,
     pub show_providing: bool,
-    pub hide_columns: HashMap<usize, bool>,
-    pub sort_by: (usize, Sort),
     pub message: String,
     pub selected: Vec<String>,
-    //for searching
-    pub searching: bool,
-    pub search_input: TextArea<'static>,
+
     //for command
     pub command: String,
-    pub show_command: bool,
     pub tab: Tab,
     //for showing all/installed
     pub only_installed: bool,
-    //for updates
+    //tabs
     pub update_widget: UpdateWidget,
+    pub packages_table: TableWidget,
+    pub installed_table: TableWidget,
+}
+
+impl AppState {
+    pub(crate) fn new(
+        installed: &[Package],
+        packages: &[Package],
+        updates: &[PackageUpdate],
+    ) -> Self {
+        AppState {
+            packages_installed: installed.iter().cloned().collect(),
+            packages_all: packages.iter().cloned().collect(),
+            packages_updates: updates.iter().cloned().collect(),
+            show_info: true,
+            only_installed: true,
+            left_table: TableWidget::new(&["Name"], vec![Constraint::Percentage(100)]),
+            right_table: TableWidget::new(&["Name"], vec![Constraint::Percentage(100)]),
+            update_widget: UpdateWidget::new(),
+            installed_table: TableWidget::new(
+                &["Name", "Reason", "ReqBy", "Foreign", "Installed"],
+                vec![
+                    Constraint::Percentage(50),
+                    Constraint::Percentage(15),
+                    Constraint::Min(5),
+                    Constraint::Min(3),
+                    Constraint::Length(19),
+                ],
+            ),
+            packages_table: TableWidget::new(
+                &["Name", "Installed"],
+                vec![Constraint::Percentage(70), Constraint::Length(19)],
+            ),
+            ..Default::default()
+        }
+    }
+
+    pub(crate) fn change_focus(&mut self, new_focus: Focus) {
+        self.focus_previous = self.focus;
+        self.focus = new_focus;
+
+        self.installed_table.focus(false);
+        self.packages_table.focus(false);
+        self.left_table.focus(false);
+        self.right_table.focus(false);
+        self.provides_table.focus(false);
+        match self.focus {
+            Focus::Left => {
+                self.left_table.focus(true);
+            }
+            Focus::Centre => {
+                if self.only_installed {
+                    self.installed_table.focus(true);
+                } else {
+                    self.packages_table.focus(true);
+                }
+            }
+            Focus::Right => {
+                self.right_table.focus(true);
+            }
+            Focus::Provides => {
+                self.provides_table.focus(true);
+            }
+            _ => {}
+        }
+    }
+    pub(crate) fn restore_focus(&mut self) {
+        self.focus = self.focus_previous;
+    }
+    pub fn focus(&self) -> Focus {
+        self.focus
+    }
 }
 
 #[derive(Debug, Default)]
@@ -135,6 +199,7 @@ pub enum Focus {
     Right,
     Provides,
     Updates,
+    Command,
     Help,
 }
 

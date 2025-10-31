@@ -1,23 +1,28 @@
-use std::{cmp::Ordering, error::Error, isize};
+use std::{cmp::Ordering, isize};
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     layout::Constraint,
     style::{Color, Style, Stylize},
-    widgets::{Cell, Row, StatefulWidget, Table, TableState, Widget},
+    text::Line,
+    widgets::{Block, Cell, Clear, Row, StatefulWidget, Table, TableState, Widget},
 };
 use regex::Regex;
-
-use crate::structs::EventResult;
+use tui_textarea::TextArea;
 
 #[derive(Default, Debug, Clone)]
 pub struct TableWidget {
     columns: Vec<String>,
     widths: Vec<Constraint>,
-    data: Vec<Vec<String>>,
+    data: Vec<TableRow>,
+    filtered: Vec<TableRow>,
     table_state: TableState,
     sort_by: (usize, Sort),
     selected: Vec<usize>,
+    title: Option<String>,
+    has_focus: bool,
+    search_text_area: TextArea<'static>,
+    searching: bool,
 }
 
 #[derive(Debug, Default, PartialEq, Clone, Copy)]
@@ -27,26 +32,52 @@ pub enum Sort {
     Desc,
 }
 
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TableRow {
+    pub cells: Vec<String>,
+    pub highlight: Option<Color>,
+}
+
 impl TableWidget {
-    pub fn new(columns: Vec<String>, widths: Vec<Constraint>) -> Self {
+    pub fn new(columns: &[&str], widths: Vec<Constraint>) -> Self {
         Self {
-            columns,
+            columns: columns.iter().map(|s| s.to_string()).collect(),
             widths,
             data: vec![],
+            filtered: vec![],
             table_state: TableState::default(),
             sort_by: (0, Sort::Asc),
             selected: vec![],
+            title: None,
+            has_focus: true,
+            search_text_area: get_textarea("Search..."),
+            searching: false,
         }
     }
 
-    pub(crate) fn handle_key_event(
-        &mut self,
-        key: &KeyEvent,
-    ) -> Result<EventResult, Box<dyn Error>> {
-        //self.columns[0] = format!("{}", key.code);
+    ///return true if event was handled and should not be processed further
+    pub(crate) fn handle_key_event(&mut self, key: &KeyEvent) -> bool {
+        if self.searching {
+            match key.code {
+                KeyCode::Esc | KeyCode::Enter => {
+                    self.searching = false;
+                    return true;
+                }
+                _ => {}
+            }
+            self.search_text_area.input(*key);
+            self.update_filtered();
+
+            return true; //dont process other items
+        }
+        // self.columns[0] = format!("handling {}", key.code);
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => self.safe_move(-1),
             KeyCode::Down | KeyCode::Char('j') => self.safe_move(1),
+            KeyCode::Esc => {
+                self.clear_search();
+                self.clear_selection();
+            }
             KeyCode::Home => self.safe_move(isize::MIN),
             KeyCode::End => self.safe_move(isize::MAX),
             KeyCode::PageUp => self.safe_move(-10),
@@ -65,13 +96,31 @@ impl TableWidget {
                     }
                 }
             }
+            KeyCode::Char('/') => self.searching = true,
+
             _ => {}
         }
-        Ok(EventResult::None)
+        false
     }
 
-    pub(crate) fn set_data(&mut self, filtered: Vec<Vec<String>>) {
-        if filtered == self.data {
+    fn get_filter(&self) -> String {
+        self.search_text_area.lines().join(" ")
+    }
+
+    pub fn focus(&mut self, focus: bool) {
+        self.has_focus = focus;
+    }
+
+    pub(crate) fn set_data(&mut self, rows: Vec<TableRow>) {
+        //check if equal cannot just compare because of ordering
+        if equal_unordered(
+            rows.iter().map(|a| &a.cells).cloned().collect::<Vec<_>>(),
+            self.data
+                .iter()
+                .map(|a| &a.cells)
+                .cloned()
+                .collect::<Vec<_>>(),
+        ) {
             return;
         }
 
@@ -79,12 +128,13 @@ impl TableWidget {
         let previous_selection = self
             .selected
             .iter()
-            .map(|&i| self.data[i].clone())
-            .collect::<Vec<Vec<String>>>();
+            .map(|&i| self.filtered[i].clone())
+            .collect::<Vec<_>>();
         self.clear_selection();
 
-        self.data = filtered;
-        if self.data.is_empty() {
+        self.data = rows;
+        self.filtered = self.data.clone();
+        if self.filtered.is_empty() {
             self.table_state.select(None);
         } else {
             self.table_state.select(Some(0));
@@ -93,17 +143,19 @@ impl TableWidget {
 
         //now restore selection if it exists in new dataset
         for row in previous_selection {
-            if let Some((i, _)) = self.data.iter().enumerate().find(|(_, r)| *r == &row) {
+            if let Some((i, _)) = self.filtered.iter().enumerate().find(|(_, r)| *r == &row) {
                 self.selected.push(i);
             }
         }
+        self.update_filtered();
     }
 
     fn safe_move(&mut self, change: isize) {
-        if self.data.is_empty() {
+        if self.filtered.is_empty() {
             return;
         }
-        let len = self.data.len();
+
+        let len = self.filtered.len();
         let tstate = &mut self.table_state;
         if change < 0 {
             tstate.select(
@@ -148,11 +200,11 @@ impl TableWidget {
         //natural sort
         match sort_dir {
             Sort::Asc => self
-                .data
-                .sort_by(|a, b| natural_cmp(&a[sort_col], &b[sort_col])),
+                .filtered
+                .sort_by(|a, b| natural_cmp(&a.cells[sort_col], &b.cells[sort_col])),
             Sort::Desc => self
-                .data
-                .sort_by(|a, b| natural_cmp(&b[sort_col], &a[sort_col])),
+                .filtered
+                .sort_by(|a, b| natural_cmp(&b.cells[sort_col], &a.cells[sort_col])),
         }
     }
 
@@ -165,53 +217,179 @@ impl TableWidget {
     }
 
     pub(crate) fn select_all(&mut self) {
-        self.selected = (0..self.data.len()).collect();
+        self.selected = (0..self.filtered.len()).collect();
     }
+
+    pub fn set_title(&mut self, title: &str) {
+        self.title = Some(title.to_string());
+    }
+
+    pub(crate) fn select(&mut self, new_index: Option<usize>) {
+        self.table_state.select(new_index)
+    }
+
+    pub(crate) fn rows(&self) -> &Vec<TableRow> {
+        &self.filtered
+    }
+
+    pub(crate) fn current(&self) -> Option<&TableRow> {
+        self.table_state
+            .selected()
+            .map(|i| self.filtered.get(i))
+            .flatten()
+    }
+    pub fn clear_search(&mut self) {
+        self.search_text_area.select_all();
+        self.search_text_area.cut();
+        self.update_filtered();
+    }
+    fn update_filtered(&mut self) {
+        let old_selected = self
+            .table_state
+            .selected()
+            .map(|i| self.filtered.get(i).cloned())
+            .flatten();
+
+        let filter = self.get_filter();
+        if filter.is_empty() {
+            self.filtered = self.data.clone();
+        } else {
+            self.filtered = self
+                .data
+                .iter()
+                .filter(|row| {
+                    row.cells
+                        .iter()
+                        .any(|cell| cell.to_lowercase().contains(&filter.to_lowercase()))
+                })
+                .cloned()
+                .collect();
+        }
+        //try find old selected in new filtered
+        if let Some(old_selected) = old_selected {
+            if let Some((i, _)) = self
+                .filtered
+                .iter()
+                .enumerate()
+                .find(|(_, r)| *r == &old_selected)
+            {
+                self.table_state.select(Some(i));
+                return;
+            }
+        }
+        //else select first
+        if self.filtered.is_empty() {
+            self.table_state.select(None);
+        } else {
+            self.table_state.select(Some(0));
+        }
+    }
+}
+
+fn equal_unordered(mut a: Vec<Vec<String>>, mut b: Vec<Vec<String>>) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.sort_unstable();
+    b.sort_unstable();
+    a == b
 }
 
 impl Widget for TableWidget {
     fn render(mut self, area: ratatui::layout::Rect, buf: &mut ratatui::buffer::Buffer) {
-        let table = Table::new(
-            self.data.iter().enumerate().map(|(ri, item)| {
-                let mut row = Row::new(item.iter().map(|c| c.as_str()));
+        let current_colour = if self.has_focus {
+            Color::Yellow
+        } else {
+            Color::DarkGray
+        };
+        let selected_colour = if self.has_focus {
+            Color::LightBlue
+        } else {
+            Color::Gray
+        };
+
+        let footer = if self.selected.len() == 0 {
+            String::new()
+        } else {
+            format!("{} selected", self.selected.len())
+        };
+        let block = Block::bordered()
+            .title(self.title.clone().unwrap_or_default())
+            .title_bottom(Line::from(footer).bg(selected_colour).black().underlined());
+
+        let mut table = Table::new(
+            self.filtered.iter().enumerate().map(|(ri, item)| {
+                let mut row = Row::new(item.cells.iter().map(|c| c.as_str()));
                 if self.selected.contains(&ri) {
-                    row = row.style(Style::new().bg(Color::Blue).fg(Color::Black).underlined());
+                    row = row.bg(selected_colour).fg(Color::Black).underlined();
+                } else if let Some(col) = item.highlight {
+                    row = row.fg(col);
                 }
                 row
             }),
             self.widths,
         )
-        .header(
-            self.columns
-                .iter()
-                .cloned()
-                .enumerate()
-                .map(|(i, c)| {
-                    let style = if self.sort_by.0 == i {
-                        Style::default().fg(Color::Yellow)
-                    } else {
-                        Style::default()
-                    };
-                    let c = match self.sort_by.1 {
-                        Sort::Asc if self.sort_by.0 == i => format!("{} ↑", c),
-                        Sort::Desc if self.sort_by.0 == i => format!("{} ↓", c),
-                        _ => c,
-                    };
-                    let c = format!("{}) {}", i + 1, c);
-                    Cell::from(c).style(style)
-                })
-                .collect::<Row>()
-                .style(Style::default().underlined().bold()),
-        )
-        .row_highlight_style(Style::new().bg(Color::Yellow).fg(Color::Black));
+        .row_highlight_style(Style::new().bg(current_colour).fg(Color::Black))
+        .block(block);
+        if !self.columns.is_empty() {
+            table = table.header(
+                self.columns
+                    .iter()
+                    .cloned()
+                    .enumerate()
+                    .map(|(i, c)| {
+                        let c = match self.sort_by.1 {
+                            Sort::Asc if self.sort_by.0 == i => format!("{} ↑", c),
+                            Sort::Desc if self.sort_by.0 == i => format!("{} ↓", c),
+                            _ => c,
+                        };
+                        let c = format!("{}", c);
+                        Cell::from(c).black()
+                    })
+                    .collect::<Row>()
+                    .bold()
+                    .bg(Color::Gray),
+            )
+        }
         <Table as StatefulWidget>::render(table, area, buf, &mut self.table_state);
+
+        let top_right = ratatui::layout::Rect {
+            x: area.x + area.width.saturating_sub(21),
+            y: area.y,
+            width: 20,
+            height: 1,
+        };
+
+        draw_search(&mut self.search_text_area, top_right, buf, self.searching);
     }
 }
+
+fn draw_search(
+    search_text_area: &mut TextArea<'static>,
+    area: ratatui::prelude::Rect,
+    buf: &mut ratatui::prelude::Buffer,
+    searching: bool,
+) {
+    if !searching && search_text_area.is_empty() {
+        return;
+    }
+    Clear.render(area, buf);
+
+    if searching {
+        search_text_area.set_cursor_style(Style::default().bg(Color::White));
+        search_text_area.render(area, buf);
+    } else if !search_text_area.is_empty() {
+        search_text_area.set_cursor_style(Style::default().bg(Color::Gray));
+        search_text_area.render(area, buf);
+    }
+}
+//init regex once using std library
+static REGEX: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
 
 ///natural sort comparison of two strings
 ///sort by numbers within strings
 fn natural_cmp(a: &str, b: &str) -> Ordering {
-    let re = Regex::new(r"\d+|\D+").unwrap();
+    let re = REGEX.get_or_init(|| Regex::new(r"\d+|\D+").unwrap());
     let mut ai = re.find_iter(a);
     let mut bi = re.find_iter(b);
 
@@ -260,4 +438,12 @@ fn natural_cmp(a: &str, b: &str) -> Ordering {
             }
         }
     }
+}
+
+fn get_textarea(label: &str) -> TextArea<'static> {
+    let mut textarea = TextArea::default();
+    textarea.set_placeholder_text(label);
+    textarea.set_style(Style::default().bg(Color::Gray).fg(Color::Black));
+    textarea.set_placeholder_style(Style::default().bg(Color::Gray).fg(Color::DarkGray));
+    textarea
 }
