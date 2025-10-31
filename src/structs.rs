@@ -69,15 +69,11 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub(crate) fn new(
-        installed: &[Package],
-        packages: &[Package],
-        updates: &[PackageUpdate],
-    ) -> Self {
+    pub(crate) fn new() -> Self {
         AppState {
-            packages_installed: installed.iter().cloned().collect(),
-            packages_all: packages.iter().cloned().collect(),
-            packages_updates: updates.iter().cloned().collect(),
+            packages_installed: vec![],
+            packages_all: vec![],
+            packages_updates: vec![],
             show_info: true,
             only_installed: true,
             left_table: TableWidget::new(&["Name"], vec![Constraint::Percentage(100)]),

@@ -90,12 +90,14 @@ impl UpdateWidget {
         match key.code {
             KeyCode::Char('s') => return Some(EventResult::Command(EventCommand::UpdateDatabase)),
             KeyCode::Char('u') => {
-                let selected = self.table.get_selected_indices();
-                let selected_names = selected
-                    .iter()
-                    .filter_map(|&i| self.filtered.get(i))
-                    .map(|u| u.name.clone())
-                    .collect::<Vec<String>>();
+                let selected_names = self
+                    .table
+                    .get_selected()
+                    .into_iter()
+                    .filter_map(|c| c.cells.get(0))
+                    .cloned()
+                    .collect();
+
                 return Some(EventResult::Queue(vec![
                     //select all visible updates
                     EventResult::Select(selected_names),
@@ -105,7 +107,7 @@ impl UpdateWidget {
             }
             KeyCode::Char('a') => {
                 if key.modifiers.contains(KeyModifiers::CONTROL) {
-                    if self.table.get_selected_indices().len() == self.filtered.len() {
+                    if self.table.get_selected().len() == self.filtered.len() {
                         self.table.clear_selection();
                     } else {
                         self.table.select_all();

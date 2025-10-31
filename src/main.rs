@@ -1,16 +1,17 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    println!("Collecting packages...");
     if !pacman_exists() {
         println!("pacman is not installed");
         std::process::exit(1);
     }
 
-    let installed = get_installed_packages()?;
-    let all_packs = get_all_packages(&installed)?;
-    let updates = get_updates()?;
+    let mut state = AppState::new();
 
-    let mut state = AppState::new(&installed, &all_packs, &updates);
-
-    refresh_packages(&mut state).unwrap();
+    let res = refresh_packages(&mut state);
+    if let Err(e) = res {
+        eprintln!("Error getting package list: {e}");
+        std::process::exit(1);
+    }
 
     let mut terminal = ratatui::init();
     terminal.clear()?;
@@ -115,7 +116,7 @@ fn draw_updates(state: &mut AppState, f: &mut Frame<'_>, area: Rect) {
 
 fn draw_packages(state: &mut AppState, f: &mut Frame<'_>, area: Rect) {
     let info = if state.show_info { 5 } else { 0 };
-    let pr = if state.show_providing {
+    let pr = if state.show_providing && state.only_installed {
         ((area.height as f32 * 0.5) as u16).max(5)
     } else {
         0
@@ -151,6 +152,15 @@ fn draw_packages(state: &mut AppState, f: &mut Frame<'_>, area: Rect) {
 
 fn handle_event(state: &mut AppState) -> Result<EventResult, Box<dyn Error>> {
     if let Event::Key(key) = event::read()? {
+        //priority is ctrl+c
+        match key.code {
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                state.selected.clear();
+                return Ok(EventResult::Quit);
+            }
+            _ => {}
+        }
+
         let handled = match state.focus() {
             Focus::Left => state.left_table.handle_key_event(&key),
             Focus::Right => state.right_table.handle_key_event(&key),
@@ -173,10 +183,16 @@ fn handle_event(state: &mut AppState) -> Result<EventResult, Box<dyn Error>> {
                         KeyCode::Char('f') => {
                             state.only_foreign = !state.only_foreign;
                         }
+                        KeyCode::Char('c') => {
+                            state.change_focus(Focus::Command);
+                        }
+                        KeyCode::Char('P') => cycle_focus_vert(state),
+                        KeyCode::Char('p') => state.show_providing = !state.show_providing,
                         _ => {}
                     }
                 }
                 update_tables(state); //always update tables, as change filter means new pacakges; and change current package means new deps
+                update_selection(state);
 
                 handled
             }
@@ -223,31 +239,29 @@ fn handle_event(state: &mut AppState) -> Result<EventResult, Box<dyn Error>> {
             match key.code {
                 KeyCode::Char('?') => state.change_focus(Focus::Help),
                 KeyCode::Char('q') => return Ok(EventResult::Quit),
-                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    state.selected.clear();
-                    return Ok(EventResult::Quit);
-                }
-                KeyCode::Char('c') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    state.change_focus(Focus::Command);
-                }
                 KeyCode::Tab => {
                     state.tab.cycle_next();
-                    state.change_focus(match state.tab {
-                        Tab::Installed => Focus::Centre,
-                        Tab::Packages => Focus::Centre,
-                        Tab::Updates => Focus::Updates,
-                    });
+                    match state.tab {
+                        Tab::Installed => {
+                            state.only_installed = true;
+                            state.change_focus(Focus::Centre);
+                        }
+                        Tab::Packages => {
+                            state.only_installed = false;
+                            state.change_focus(Focus::Centre);
+                        }
+                        Tab::Updates => {
+                            state.change_focus(Focus::Updates);
+                        }
+                    };
+
+                    update_dependency_tables(state);
                     return Ok(EventResult::None);
                 }
-
                 KeyCode::Char('i') => state.show_info = !state.show_info,
-                KeyCode::Char('P') => cycle_focus_vert(state),
-                KeyCode::Char('p') => state.show_providing = !state.show_providing,
                 KeyCode::Left | KeyCode::Char('h') => cycle_focus_horiz(state, -1),
                 KeyCode::Right | KeyCode::Char('l') => cycle_focus_horiz(state, 1),
                 KeyCode::Enter => handle_enter(state),
-
-                // KeyCode::Char(' ') => handle_select(state),
                 KeyCode::Backspace => {
                     if let Some(prev) = state.prev.pop() {
                         goto_package(state, &prev);
@@ -258,6 +272,23 @@ fn handle_event(state: &mut AppState) -> Result<EventResult, Box<dyn Error>> {
         }
     }
     Ok(EventResult::None)
+}
+
+fn update_selection(state: &mut AppState) {
+    if state.focus() == Focus::Centre {
+        let table = if state.only_installed {
+            &state.installed_table
+        } else {
+            &state.packages_table
+        };
+
+        state.selected = table
+            .get_selected()
+            .iter()
+            .filter_map(|i| i.cells.get(0))
+            .cloned()
+            .collect::<Vec<String>>();
+    }
 }
 
 fn goto_screen(alternate: bool, terminal: &mut DefaultTerminal) -> Result<(), Box<dyn Error>> {
@@ -315,10 +346,22 @@ fn run_command(state: &mut AppState, command: EventCommand) -> Result<(), Box<dy
     Ok(())
 }
 
-fn refresh_packages(state: &mut AppState) -> Result<(), Box<dyn Error>> {
-    state.packages_installed = get_installed_packages()?;
-    state.packages_all = get_all_packages(&state.packages_installed)?;
-    state.packages_updates = get_updates()?;
+fn refresh_packages(state: &mut AppState) -> Result<(), AppError> {
+    //run these in parallel
+    let jh1 = std::thread::spawn(|| get_installed_packages());
+    let jh2 = std::thread::spawn(|| get_all_packages());
+    let jh3 = std::thread::spawn(|| get_updates());
+
+    //now join threads
+    let installed = jh1.join().expect("Thread error")?;
+    let all = jh2.join().expect("Thread error")?;
+    let updates = jh3.join().expect("Thread error")?;
+
+    state.packages_installed = installed;
+    state.packages_all = all;
+    state.packages_updates = updates;
+
+    update_all_with_installed(&mut state.packages_all, &state.packages_installed);
     update_tables(state);
     Ok(())
 }
@@ -823,7 +866,7 @@ fn pacman_exists() -> bool {
     Command::new("pacman").output().is_ok()
 }
 
-fn get_packages_command(command: &str) -> Result<Vec<Package>, Box<dyn std::error::Error>> {
+fn get_packages_command(command: &str) -> Result<Vec<Package>, AppError> {
     let output = Command::new("pacman")
         .env("LC_TIME", "C")
         .arg(command)
@@ -897,25 +940,28 @@ fn get_packages_command(command: &str) -> Result<Vec<Package>, Box<dyn std::erro
     Ok(packs)
 }
 
-fn get_all_packages(installed: &[Package]) -> Result<Vec<Package>, Box<dyn std::error::Error>> {
-    let mut packs = get_packages_command("-Si")?;
+fn get_all_packages() -> Result<Vec<Package>, AppError> {
+    let packs = get_packages_command("-Si")?;
+    Ok(packs)
+}
+
+fn update_all_with_installed(all: &mut Vec<Package>, installed: &[Package]) {
     let map = installed
         .iter()
         .map(|p| (p.name.clone(), p.installed.clone()))
         .collect::<std::collections::HashMap<_, _>>();
     //now update installed status
-    for pack in packs.iter_mut() {
+    for pack in all.iter_mut() {
         if map.contains_key(&pack.name) {
             pack.installed = map[&pack.name].clone();
         }
     }
-    Ok(packs)
 }
-fn get_installed_packages() -> Result<Vec<Package>, Box<dyn std::error::Error>> {
+fn get_installed_packages() -> Result<Vec<Package>, AppError> {
     get_packages_command("-Qi")
 }
 
-fn get_updates() -> Result<Vec<PackageUpdate>, Box<dyn std::error::Error>> {
+fn get_updates() -> Result<Vec<PackageUpdate>, AppError> {
     let output = Command::new("pacman")
         .env("LC_TIME", "C")
         .arg("-Qu")
@@ -926,11 +972,13 @@ fn get_updates() -> Result<Vec<PackageUpdate>, Box<dyn std::error::Error>> {
         let line = line.replace(" -> ", " ");
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() == 3 {
+            let current = Version::from(parts[1]);
+            let new = Version::from(parts[2]);
             updates.push(PackageUpdate {
                 name: parts[0].to_string(),
                 current_version: parts[1].to_string(),
                 new_version: parts[2].to_string(),
-                change_type: change_type(parts[1], parts[2]),
+                change_type: current.change_type(&new),
             });
         }
     }
@@ -947,7 +995,9 @@ fn to_date(value: &str) -> String {
     time.to_datetime().unwrap().to_string().replace("T", " ")
 }
 
+pub mod error;
 pub mod structs;
+pub mod utils;
 pub mod version;
 pub mod widgets;
 
@@ -963,7 +1013,8 @@ use std::{error::Error, io::Write, process::Command, time::Instant};
 use structs::{AppState, EventResult, Focus, Package, Reason};
 
 use crate::{
+    error::AppError,
     structs::{EventCommand, PackageUpdate, Tab},
-    version::change_type,
+    version::Version,
     widgets::table::{TableRow, TableWidget},
 };

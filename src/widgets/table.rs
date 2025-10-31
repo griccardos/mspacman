@@ -1,4 +1,5 @@
-use std::{cmp::Ordering, isize};
+use crate::utils::natural_cmp;
+use std::isize;
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
@@ -7,7 +8,6 @@ use ratatui::{
     text::Line,
     widgets::{Block, Cell, Clear, Row, StatefulWidget, Table, TableState, Widget},
 };
-use regex::Regex;
 use tui_textarea::TextArea;
 
 #[derive(Default, Debug, Clone)]
@@ -212,8 +212,13 @@ impl TableWidget {
         self.selected.clear();
     }
 
-    pub fn get_selected_indices(&self) -> &Vec<usize> {
-        &self.selected
+    pub fn get_selected(&self) -> Vec<&TableRow> {
+        self.filtered
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| self.selected.contains(i))
+            .map(|(_, r)| r)
+            .collect::<Vec<&TableRow>>()
     }
 
     pub(crate) fn select_all(&mut self) {
@@ -381,62 +386,6 @@ fn draw_search(
     } else if !search_text_area.is_empty() {
         search_text_area.set_cursor_style(Style::default().bg(Color::Gray));
         search_text_area.render(area, buf);
-    }
-}
-//init regex once using std library
-static REGEX: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-
-///natural sort comparison of two strings
-///sort by numbers within strings
-fn natural_cmp(a: &str, b: &str) -> Ordering {
-    let re = REGEX.get_or_init(|| Regex::new(r"\d+|\D+").unwrap());
-    let mut ai = re.find_iter(a);
-    let mut bi = re.find_iter(b);
-
-    loop {
-        match (ai.next(), bi.next()) {
-            (None, None) => return Ordering::Equal,
-            (None, _) => return Ordering::Less,
-            (_, None) => return Ordering::Greater,
-            (Some(am), Some(bm)) => {
-                let as_ = am.as_str();
-                let bs_ = bm.as_str();
-
-                let a_is_num = as_
-                    .chars()
-                    .next()
-                    .map(|c| c.is_ascii_digit())
-                    .unwrap_or(false);
-                let b_is_num = bs_
-                    .chars()
-                    .next()
-                    .map(|c| c.is_ascii_digit())
-                    .unwrap_or(false);
-
-                if a_is_num && b_is_num {
-                    // compare numerically (handles multi-digit numbers)
-                    let an = as_.parse::<u64>().unwrap_or(0);
-                    let bn = bs_.parse::<u64>().unwrap_or(0);
-                    match an.cmp(&bn) {
-                        Ordering::Equal => {
-                            // tie-breaker: shorter numeric token (so "01" < "1" if you want),
-                            // or you can skip this and treat them equal.
-                            match as_.len().cmp(&bs_.len()) {
-                                Ordering::Equal => continue,
-                                ord => return ord,
-                            }
-                        }
-                        ord => return ord,
-                    }
-                } else {
-                    // lexicographic (case-sensitive). For case-insensitive use .to_lowercase()
-                    match as_.cmp(bs_) {
-                        Ordering::Equal => continue,
-                        ord => return ord,
-                    }
-                }
-            }
-        }
     }
 }
 
