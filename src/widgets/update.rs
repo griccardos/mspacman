@@ -1,16 +1,15 @@
 use std::collections::HashMap;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::{
-    layout::{Constraint, Direction, Layout},
-    style::Color,
-    widgets::{List, Widget},
-};
+use ratatui::{layout::Constraint, style::Color, widgets::Widget};
 
 use crate::{
     structs::{EventCommand, EventResult, PackageUpdate},
     version::ChangeType,
-    widgets::table::{TableRow, TableWidget},
+    widgets::{
+        Commands,
+        table::{TableRow, TableWidget},
+    },
 };
 
 ///Keep state inside the widget. Need to store in your app state
@@ -44,9 +43,9 @@ impl UpdateWidget {
         }
         self.data = data.iter().cloned().collect();
         self.filtered = self.data.clone();
-        self.set_table_data();
+        self.filter_data();
     }
-    pub fn set_table_data(&mut self) {
+    pub fn filter_data(&mut self) {
         match &self.filter {
             Some(change_type) => {
                 self.filtered = self
@@ -79,60 +78,6 @@ impl UpdateWidget {
                 })
                 .collect(),
         );
-    }
-
-    pub(crate) fn handle_key_event(&mut self, key: &KeyEvent) -> Option<EventResult> {
-        let handled = self.table.handle_key_event(key);
-        if handled {
-            return Some(EventResult::None); //handled so do nothing more
-        };
-
-        match key.code {
-            KeyCode::Char('s') => return Some(EventResult::Command(EventCommand::UpdateDatabase)),
-            KeyCode::Char('u') => {
-                let selected_names = self
-                    .table
-                    .get_selected()
-                    .into_iter()
-                    .filter_map(|c| c.cells.get(0))
-                    .cloned()
-                    .collect();
-
-                return Some(EventResult::Queue(vec![
-                    //select all visible updates
-                    EventResult::Select(selected_names),
-                    //sync selected updates
-                    EventResult::Command(EventCommand::SyncUpdateSelected),
-                ]));
-            }
-            KeyCode::Char('a') => {
-                if key.modifiers.contains(KeyModifiers::CONTROL) {
-                    if self.table.get_selected().len() == self.filtered.len() {
-                        self.table.clear_selection();
-                    } else {
-                        self.table.select_all();
-                    }
-                }
-            }
-
-            KeyCode::Char('m') => {
-                self.filter = Some(ChangeType::Major);
-                self.set_table_data();
-            }
-            KeyCode::Char('n') => {
-                self.filter = Some(ChangeType::Minor);
-                self.set_table_data();
-            }
-            KeyCode::Esc => {
-                self.table.clear_selection();
-                self.filter = None;
-                self.set_table_data();
-            }
-
-            _ => {}
-        }
-
-        None
     }
 }
 
@@ -170,25 +115,77 @@ impl Widget for UpdateWidget {
         );
         self.table.set_title(&message);
 
-        let commands = vec![
-            "s: Sync database".to_string(),
-            "u: Update selected packages".to_string(),
-            "m/n: Show major(m)/minor(n) changes and up".to_string(),
-            "Ctrl+a: Toggle select all".to_string(),
-        ];
+        self.table.render(area, buf);
+    }
+}
 
-        let top_bottom = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min((commands.len()) as u16),
-                Constraint::Percentage(100),
-            ])
-            .split(area);
+impl Commands for UpdateWidget {
+    fn command_descriptions(&self) -> Vec<(&str, &str)> {
+        vec![
+            ("s", "Sync database"),
+            ("u", "Update selected packages"),
+            ("m", "Show major changes and up"),
+            ("n", "Show minor changes and up"),
+            ("a", "Show all changes"),
+            ("/", "Search table"),
+            ("Esc", "Clear selection and filters"),
+            ("Ctrl+a", "Toggle select all"),
+        ]
+    }
+    fn handle_key_event(&mut self, key: &KeyEvent) -> Option<EventResult> {
+        let handled = self.table.handle_key_event(key);
+        if handled {
+            return Some(EventResult::None); //handled so do nothing more
+        };
 
-        let all = commands.iter().chain(counts.iter()).map(|s| s.as_str());
-        let list = List::new(all);
+        match key.code {
+            KeyCode::Char('s') => return Some(EventResult::Command(EventCommand::UpdateDatabase)),
+            KeyCode::Char('u') => {
+                let selected_names = self
+                    .table
+                    .get_selected()
+                    .into_iter()
+                    .filter_map(|c| c.cells.get(0))
+                    .cloned()
+                    .collect();
 
-        <List as Widget>::render(list, top_bottom[0], buf);
-        self.table.render(top_bottom[1], buf);
+                return Some(EventResult::Queue(vec![
+                    //select all visible updates
+                    EventResult::Select(selected_names),
+                    //sync selected updates
+                    EventResult::Command(EventCommand::SyncUpdateSelected),
+                ]));
+            }
+            KeyCode::Char('a') => {
+                if key.modifiers.contains(KeyModifiers::CONTROL) {
+                    if self.table.get_selected().len() == self.filtered.len() {
+                        self.table.clear_selection();
+                    } else {
+                        self.table.select_all();
+                    }
+                } else {
+                    self.filter = None;
+                    self.filter_data();
+                }
+            }
+
+            KeyCode::Char('m') => {
+                self.filter = Some(ChangeType::Major);
+                self.filter_data();
+            }
+            KeyCode::Char('n') => {
+                self.filter = Some(ChangeType::Minor);
+                self.filter_data();
+            }
+            KeyCode::Esc => {
+                self.table.clear_selection();
+                self.filter = None;
+                self.filter_data();
+            }
+
+            _ => {}
+        }
+
+        None
     }
 }

@@ -20,9 +20,16 @@ pub struct TableWidget {
     sort_by: (usize, Sort),
     selected: Vec<usize>,
     title: Option<String>,
-    has_focus: bool,
+    focus_type: TableFocus,
     search_text_area: TextArea<'static>,
     searching: bool,
+}
+#[derive(Default, Debug, Clone)]
+pub enum TableFocus {
+    #[default]
+    Focused, //shows selection normally
+    UnfocusedDimmed, //hides selection all together
+    Unfocused,       //shows selection dimmed
 }
 
 #[derive(Debug, Default, PartialEq, Clone, Copy)]
@@ -49,8 +56,8 @@ impl TableWidget {
             sort_by: (0, Sort::Asc),
             selected: vec![],
             title: None,
-            has_focus: true,
-            search_text_area: get_textarea("Search..."),
+            focus_type: TableFocus::Focused,
+            search_text_area: get_textarea(),
             searching: false,
         }
     }
@@ -107,8 +114,8 @@ impl TableWidget {
         self.search_text_area.lines().join(" ")
     }
 
-    pub fn focus(&mut self, focus: bool) {
-        self.has_focus = focus;
+    pub fn focus(&mut self, focus: TableFocus) {
+        self.focus_type = focus;
     }
 
     pub(crate) fn set_data(&mut self, rows: Vec<TableRow>) {
@@ -302,15 +309,16 @@ fn equal_unordered(mut a: Vec<Vec<String>>, mut b: Vec<Vec<String>>) -> bool {
 
 impl Widget for TableWidget {
     fn render(mut self, area: ratatui::layout::Rect, buf: &mut ratatui::buffer::Buffer) {
-        let current_colour = if self.has_focus {
-            Color::Yellow
-        } else {
-            Color::DarkGray
+        let (current_fg, current_bg) = match self.focus_type {
+            TableFocus::Focused => (Color::Black, Color::Yellow),
+            TableFocus::UnfocusedDimmed => (Color::Black, Color::DarkGray),
+            TableFocus::Unfocused => (Color::White, Color::Reset),
         };
-        let selected_colour = if self.has_focus {
-            Color::LightBlue
-        } else {
-            Color::Gray
+
+        let selected_colour = match self.focus_type {
+            TableFocus::Focused => Color::LightBlue,
+            TableFocus::UnfocusedDimmed => Color::Gray,
+            TableFocus::Unfocused => Color::Gray,
         };
 
         let footer = if self.selected.len() == 0 {
@@ -334,7 +342,7 @@ impl Widget for TableWidget {
             }),
             self.widths,
         )
-        .row_highlight_style(Style::new().bg(current_colour).fg(Color::Black))
+        .row_highlight_style(Style::new().bg(current_bg).fg(current_fg))
         .block(block);
         if !self.columns.is_empty() {
             table = table.header(
@@ -353,7 +361,7 @@ impl Widget for TableWidget {
                     })
                     .collect::<Row>()
                     .bold()
-                    .bg(Color::Gray),
+                    .bg(Color::Red),
             )
         }
         <Table as StatefulWidget>::render(table, area, buf, &mut self.table_state);
@@ -382,17 +390,20 @@ fn draw_search(
 
     if searching {
         search_text_area.set_cursor_style(Style::default().bg(Color::White));
+        search_text_area.set_style(Style::default().bg(Color::Blue).fg(Color::Black));
         search_text_area.render(area, buf);
     } else if !search_text_area.is_empty() {
-        search_text_area.set_cursor_style(Style::default().bg(Color::Gray));
+        search_text_area.set_cursor_style(Style::default());
+        search_text_area.set_style(Style::default().bg(Color::Gray).fg(Color::Black));
         search_text_area.render(area, buf);
     }
 }
 
-fn get_textarea(label: &str) -> TextArea<'static> {
+fn get_textarea() -> TextArea<'static> {
     let mut textarea = TextArea::default();
-    textarea.set_placeholder_text(label);
-    textarea.set_style(Style::default().bg(Color::Gray).fg(Color::Black));
-    textarea.set_placeholder_style(Style::default().bg(Color::Gray).fg(Color::DarkGray));
+    textarea.set_placeholder_text("Search...");
+    textarea.set_style(Style::default().bg(Color::Blue).fg(Color::Black));
+    textarea.set_placeholder_style(Style::default().bg(Color::Blue).fg(Color::DarkGray));
+
     textarea
 }

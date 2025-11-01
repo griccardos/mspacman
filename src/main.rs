@@ -1,3 +1,5 @@
+use widgets::table::TableFocus;
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Collecting packages...");
     if !pacman_exists() {
@@ -684,11 +686,30 @@ fn draw_help(state: &mut AppState, f: &mut Frame) -> Result<(), Box<dyn Error>> 
     if state.focus() != Focus::Help {
         return Ok(());
     }
+
+    let mut commands = vec!["?: Toggle Help".to_string(), "q: Quit".to_string()];
+
+    //use previous focus because current focus is help
+    let extra = match state.focus_previous() {
+        Focus::Left => vec![],
+        Focus::Centre => vec![],
+        Focus::Right => vec![],
+        Focus::Provides => vec![],
+        Focus::Updates => state.update_widget.command_descriptions(),
+        Focus::Command => vec![],
+        Focus::Help => vec![],
+    };
+    let formatted = extra
+        .into_iter()
+        .map(|(k, v)| format!("{}: {}", k, v))
+        .collect::<Vec<_>>();
+    commands.extend(formatted);
+
     let size = f.area();
 
     // Calculate the block size (1/3 of the screen size)
     let block_width = (size.width / 3).max(50);
-    let block_height = (size.height / 3).max(22);
+    let block_height = (size.height / 3).min(22).min(commands.len() as u16 + 2);
 
     // Calculate the block position (centered)
     let block_x = (size.width - block_width) / 2;
@@ -701,29 +722,28 @@ fn draw_help(state: &mut AppState, f: &mut Frame) -> Result<(), Box<dyn Error>> 
         .style(Style::default().bg(Color::Blue).fg(Color::Black));
 
     // Create a paragraph to display inside the block
-    let paragraph = Paragraph::new(vec![
-        "?: Toggle Help".into(),
-        "q: Quit".into(),
-        "i: Info".into(),
-        "Tab: Switch tab".into(),
-        "Left/Right/h/l: Switch column".into(),
-        "Up/Down/k/j: Navigate".into(),
-        "Esc: Clear filters and selection".into(),
-        "e: Explicitly installed only".into(),
-        "f: Foreign packages only".into(),
-        "o: Orphans only".into(),
-        "/: Search".into(),
-        "[1-9]: Sort column".into(),
-        "Enter (on outer columns): Goto Package".into(),
-        "Backspace: Previous package".into(),
-        "Tab: Next tab".into(),
-        "Space: Select/Deselect".into(),
-        "c: Run command on selection".into(),
-        "p: Provides".into(),
-        "Shift+p: Switch focus to/from provides tab".into(),
-    ])
-    .block(block)
-    .alignment(Alignment::Left);
+    let paragraph = Paragraph::new(commands.into_iter().map(|s| s.into()).collect::<Vec<_>>())
+        /*
+            "i: Info".into(),
+            "Tab: Switch tab".into(),
+            "Left/Right/h/l: Switch column".into(),
+            "Up/Down/k/j: Navigate".into(),
+            "Esc: Clear filters and selection".into(),
+            "e: Explicitly installed only".into(),
+            "f: Foreign packages only".into(),
+            "o: Orphans only".into(),
+            "/: Search".into(),
+            "[1-9]: Sort column".into(),
+            "Enter (on outer columns): Goto Package".into(),
+            "Backspace: Previous package".into(),
+            "Tab: Next tab".into(),
+            "Space: Select/Deselect".into(),
+            "c: Run command on selection".into(),
+            "p: Provides".into(),
+            "Shift+p: Switch focus to/from provides tab".into(),
+        ])*/
+        .block(block)
+        .alignment(Alignment::Left);
     let rect = Rect::new(block_x, block_y, block_width, block_height);
     // Render the block
     f.render_widget(Clear, rect);
@@ -783,7 +803,11 @@ fn draw_centre(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Bo
     } else {
         state.packages_table.clone()
     };
-    table.focus(state.focus() == Focus::Centre);
+    table.focus(if state.focus() == Focus::Centre {
+        TableFocus::Focused
+    } else {
+        TableFocus::UnfocusedDimmed
+    });
     f.render_widget(table, rect);
     Ok(())
 }
@@ -793,12 +817,20 @@ fn draw_dependencies(
     f: &mut Frame,
     rect: Rect,
 ) -> Result<(), Box<dyn Error>> {
-    state.left_table.focus(state.focus() == Focus::Left);
+    state.left_table.focus(if state.focus() == Focus::Left {
+        TableFocus::Focused
+    } else {
+        TableFocus::Unfocused
+    });
     state.left_table.clone().render(rect, f.buffer_mut());
     Ok(())
 }
 fn draw_dependents(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Box<dyn Error>> {
-    state.right_table.focus(state.focus() == Focus::Right);
+    state.right_table.focus(if state.focus() == Focus::Right {
+        TableFocus::Focused
+    } else {
+        TableFocus::Unfocused
+    });
     state.right_table.clone().render(rect, f.buffer_mut());
     Ok(())
 }
@@ -1016,5 +1048,8 @@ use crate::{
     error::AppError,
     structs::{EventCommand, PackageUpdate, Tab},
     version::Version,
-    widgets::table::{TableRow, TableWidget},
+    widgets::{
+        Commands,
+        table::{TableRow, TableWidget},
+    },
 };

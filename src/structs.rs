@@ -4,7 +4,10 @@ use ratatui::layout::Constraint;
 
 use crate::{
     version::ChangeType,
-    widgets::{table::TableWidget, update::UpdateWidget},
+    widgets::{
+        table::{TableFocus, TableWidget},
+        update::UpdateWidget,
+    },
 };
 
 #[derive(Debug, Default, Clone)]
@@ -101,27 +104,27 @@ impl AppState {
         self.focus_previous = self.focus;
         self.focus = new_focus;
 
-        self.installed_table.focus(false);
-        self.packages_table.focus(false);
-        self.left_table.focus(false);
-        self.right_table.focus(false);
-        self.provides_table.focus(false);
+        self.installed_table.focus(TableFocus::UnfocusedDimmed);
+        self.packages_table.focus(TableFocus::UnfocusedDimmed);
+        self.left_table.focus(TableFocus::Unfocused);
+        self.right_table.focus(TableFocus::Unfocused);
+        self.provides_table.focus(TableFocus::Unfocused);
         match self.focus {
             Focus::Left => {
-                self.left_table.focus(true);
+                self.left_table.focus(TableFocus::Focused);
             }
             Focus::Centre => {
                 if self.only_installed {
-                    self.installed_table.focus(true);
+                    self.installed_table.focus(TableFocus::Focused);
                 } else {
-                    self.packages_table.focus(true);
+                    self.packages_table.focus(TableFocus::Focused);
                 }
             }
             Focus::Right => {
-                self.right_table.focus(true);
+                self.right_table.focus(TableFocus::Focused);
             }
             Focus::Provides => {
-                self.provides_table.focus(true);
+                self.provides_table.focus(TableFocus::Focused);
             }
             _ => {}
         }
@@ -131,6 +134,10 @@ impl AppState {
     }
     pub fn focus(&self) -> Focus {
         self.focus
+    }
+
+    pub(crate) fn focus_previous(&self) -> Focus {
+        self.focus_previous
     }
 }
 
