@@ -11,15 +11,15 @@ pub fn natural_cmp(a: &str, b: &str) -> Ordering {
     for (a, b) in tokens_a.iter().zip(tokens_b.iter()) {
         let or = match (a, b) {
             (Token::Number(a), Token::Number(b)) => a.cmp(b),
-            (Token::Number(_), Token::String(_)) => Ordering::Greater,
-            (Token::String(_), Token::Number(_)) => Ordering::Less,
+            (Token::Number(_), Token::String(_)) => Ordering::Less,
+            (Token::String(_), Token::Number(_)) => Ordering::Greater,
             (Token::String(a), Token::String(b)) => a.cmp(b),
         };
         if or != Ordering::Equal {
             return or;
         }
     }
-    Ordering::Equal
+    tokens_a.len().cmp(&tokens_b.len()) //in case different length but equal up to the shortest
 }
 enum Token {
     Number(u64),
