@@ -163,6 +163,7 @@ fn handle_event(state: &mut AppState) -> Result<EventResult, Box<dyn Error>> {
             _ => {}
         }
 
+        //next we handle based on focus
         let handled = match state.focus() {
             Focus::Left => state.left_table.handle_key_event(&key),
             Focus::Right => state.right_table.handle_key_event(&key),
@@ -214,9 +215,7 @@ fn handle_event(state: &mut AppState) -> Result<EventResult, Box<dyn Error>> {
                     KeyCode::Char('q') => {
                         return Ok(EventResult::Command(EventCommand::QuerySelected));
                     }
-                    KeyCode::Char('s') => {
-                        return Ok(EventResult::Command(EventCommand::SyncUpdateSelected));
-                    }
+
                     _ => {}
                 }
 
@@ -236,7 +235,7 @@ fn handle_event(state: &mut AppState) -> Result<EventResult, Box<dyn Error>> {
             return Ok(EventResult::None);
         }
 
-        //global key handling
+        //final global key handling
         if key.kind == KeyEventKind::Press {
             match key.code {
                 KeyCode::Char('?') => state.change_focus(Focus::Help),
@@ -260,6 +259,10 @@ fn handle_event(state: &mut AppState) -> Result<EventResult, Box<dyn Error>> {
                     update_dependency_tables(state);
                     return Ok(EventResult::None);
                 }
+                KeyCode::Char('s') => {
+                    return Ok(EventResult::Command(EventCommand::SyncDatabase));
+                }
+
                 KeyCode::Char('i') => state.show_info = !state.show_info,
                 KeyCode::Left | KeyCode::Char('h') => cycle_focus_horiz(state, -1),
                 KeyCode::Right | KeyCode::Char('l') => cycle_focus_horiz(state, 1),
@@ -314,9 +317,9 @@ fn goto_screen(alternate: bool, terminal: &mut DefaultTerminal) -> Result<(), Bo
 fn run_command(state: &mut AppState, command: EventCommand) -> Result<(), Box<dyn Error>> {
     let (comm, mut args, needs_package_list) = match command {
         EventCommand::RemoveSelected => ("pacman", vec!["-R"], true),
-        EventCommand::SyncUpdateSelected => ("pacman", vec!["-S"], true),
+        EventCommand::UpdateSelected => ("pacman", vec!["-S"], true),
         EventCommand::QuerySelected => ("pacman", vec!["-Qi"], true),
-        EventCommand::UpdateDatabase => ("pacman", vec!["-Sy"], false),
+        EventCommand::SyncDatabase => ("pacman", vec!["-Sy"], false),
     };
     if needs_package_list && state.selected.is_empty() {
         return Err(String::from("No packages selected").into());
@@ -687,7 +690,11 @@ fn draw_help(state: &mut AppState, f: &mut Frame) -> Result<(), Box<dyn Error>> 
         return Ok(());
     }
 
-    let mut commands = vec!["?: Toggle Help".to_string(), "q: Quit".to_string()];
+    let mut commands = vec![
+        "?: Toggle Help".to_string(),
+        "q: Quit".to_string(),
+        "s: Sync Database".to_string(),
+    ];
 
     //use previous focus because current focus is help
     let extra = match state.focus_previous() {

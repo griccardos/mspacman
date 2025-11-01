@@ -122,7 +122,6 @@ impl Widget for UpdateWidget {
 impl Commands for UpdateWidget {
     fn command_descriptions(&self) -> Vec<(&str, &str)> {
         vec![
-            ("s", "Sync database"),
             ("u", "Update selected packages"),
             ("m", "Show major changes and up"),
             ("n", "Show minor changes and up"),
@@ -139,7 +138,6 @@ impl Commands for UpdateWidget {
         };
 
         match key.code {
-            KeyCode::Char('s') => return Some(EventResult::Command(EventCommand::UpdateDatabase)),
             KeyCode::Char('u') => {
                 let selected_names = self
                     .table
@@ -153,7 +151,7 @@ impl Commands for UpdateWidget {
                     //select all visible updates
                     EventResult::Select(selected_names),
                     //sync selected updates
-                    EventResult::Command(EventCommand::SyncUpdateSelected),
+                    EventResult::Command(EventCommand::UpdateSelected),
                 ]));
             }
             KeyCode::Char('a') => {

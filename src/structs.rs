@@ -229,7 +229,7 @@ pub enum EventResult {
 
 pub enum EventCommand {
     RemoveSelected,
-    SyncUpdateSelected,
+    UpdateSelected,
     QuerySelected,
-    UpdateDatabase,
+    SyncDatabase,
 }
