@@ -20,9 +20,15 @@ pub struct Package {
     pub reason: Reason,
     //info
     pub version: String,
-    pub installed: String,
     pub description: String,
     pub validated: bool,
+
+    //installed for installed packages
+    pub installed: Option<String>,
+
+    //updates for available updates
+    pub new_version: Option<String>,
+    pub change_type: Option<ChangeType>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -43,9 +49,7 @@ pub enum Reason {
 
 #[derive(Debug, Default)]
 pub struct AppState {
-    pub packages_installed: Vec<Package>,
-    pub packages_all: Vec<Package>,
-    pub packages_updates: Vec<PackageUpdate>,
+    pub packages: Vec<Package>,
     pub left_table: TableWidget,
     pub right_table: TableWidget,
     pub provides_table: TableWidget,
@@ -74,9 +78,7 @@ pub struct AppState {
 impl AppState {
     pub(crate) fn new() -> Self {
         AppState {
-            packages_installed: vec![],
-            packages_all: vec![],
-            packages_updates: vec![],
+            packages: vec![],
             show_info: true,
             only_installed: true,
             left_table: TableWidget::new(&["Name"], vec![Constraint::Percentage(100)]),

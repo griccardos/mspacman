@@ -112,7 +112,6 @@ fn draw_tabs(state: &AppState, f: &mut Frame<'_>, header_area: Rect) {
 }
 
 fn draw_updates(state: &mut AppState, f: &mut Frame<'_>, area: Rect) {
-    state.update_widget.set_data(&state.packages_updates);
     state.update_widget.clone().render(area, f.buffer_mut());
 }
 
@@ -362,19 +361,60 @@ fn refresh_packages(state: &mut AppState) -> Result<(), AppError> {
     let all = jh2.join().expect("Thread error")?;
     let updates = jh3.join().expect("Thread error")?;
 
-    state.packages_installed = installed;
-    state.packages_all = all;
-    state.packages_updates = updates;
+    state.packages = combine_packages(installed, all, updates);
+    state.update_widget.set_data(
+        &state
+            .packages
+            .iter()
+            .filter(|a| a.new_version.is_some())
+            .map(|p| PackageUpdate {
+                name: p.name.clone(),
+                current_version: p.version.clone(),
+                new_version: p.new_version.clone().unwrap(),
+                change_type: p.change_type.clone().unwrap(),
+            })
+            .collect::<Vec<_>>(),
+    );
 
-    update_all_with_installed(&mut state.packages_all, &state.packages_installed);
     update_tables(state);
     Ok(())
 }
 
-fn update_tables(state: &mut AppState) {
-    let packs: Vec<_> = state
-        .packages_installed
+fn combine_packages(
+    installed: Vec<Package>,
+    all: Vec<Package>,
+    updates: Vec<PackageUpdate>,
+) -> Vec<Package> {
+    //start with installed, this may include those not in repo
+    let installed_names = installed
         .iter()
+        .map(|p| p.name.clone())
+        .collect::<HashSet<_>>();
+    let mut combined = installed;
+    //we now add all local packages not installed
+    for pack in all.iter() {
+        if !installed_names.contains(&pack.name) {
+            combined.push(pack.clone());
+        }
+    }
+
+    //we add update info
+    for pack in updates.iter() {
+        if let Some(p) = combined.iter_mut().find(|p| p.name == pack.name) {
+            p.new_version = Some(pack.new_version.clone());
+            p.change_type = Some(pack.change_type.clone());
+        }
+    }
+
+    combined
+}
+
+fn update_tables(state: &mut AppState) {
+    //installed
+    let packs: Vec<_> = state
+        .packages
+        .iter()
+        .filter(|p| p.installed.is_some())
         .filter(|p| !state.only_expl || p.reason == Reason::Explicit) //only show explicit packages
         .filter(|p| !state.only_foreign || !p.validated) //only show foreign packages
         .filter(|p| {
@@ -399,7 +439,7 @@ fn update_tables(state: &mut AppState) {
                     format!("{:?}", pack.reason),
                     pack.required_by.len().to_string(),
                     format!("{}", if pack.validated { "" } else { "X" }),
-                    pack.installed.clone(),
+                    pack.installed.clone().expect("filtered installed only"),
                 ],
                 highlight: highlighted,
             }
@@ -441,17 +481,21 @@ fn update_tables(state: &mut AppState) {
     let title = format!("Installed {count}{extra} {filters}");
     state.installed_table.set_title(&title);
 
+    //all packages
     let rows = state
-        .packages_all
+        .packages
         .iter()
         .map(|pack| {
-            let highlighted = if !pack.installed.is_empty() {
+            let highlighted = if pack.installed.is_some() {
                 Some(Color::Green)
             } else {
                 None
             };
             TableRow {
-                cells: vec![pack.name.clone(), pack.installed.clone()],
+                cells: vec![
+                    pack.name.clone(),
+                    pack.installed.clone().unwrap_or_default(),
+                ],
                 highlight: highlighted,
             }
         })
@@ -778,9 +822,9 @@ fn draw_status(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Bo
 
 fn current_pack(state: &AppState) -> Option<&Package> {
     if state.only_installed {
-        get_package_from_table(&state.installed_table, &state.packages_installed)
+        get_package_from_table(&state.installed_table, &state.packages)
     } else {
-        get_package_from_table(&state.packages_table, &state.packages_all)
+        get_package_from_table(&state.packages_table, &state.packages)
     }
 }
 
@@ -795,11 +839,7 @@ fn get_package_from_table<'a>(
     }
 }
 fn get_pack<'a>(state: &'a AppState, name: &str) -> Option<&'a Package> {
-    if state.only_installed {
-        state.packages_installed.iter().find(|p| p.name == name)
-    } else {
-        state.packages_all.iter().find(|p| p.name == name)
-    }
+    state.packages.iter().find(|p| p.name == name)
 }
 
 ///draws list, plus package info
@@ -892,11 +932,8 @@ fn ensure_has_provides(state: &mut AppState) {
         }
     }
     if let (Some(name), Some(provides)) = (name, provides) {
-        if let Some(pack) = state.packages_installed.iter_mut().find(|p| p.name == name) {
+        if let Some(pack) = state.packages.iter_mut().find(|p| p.name == name) {
             pack.provides = provides.clone();
-        }
-        if let Some(pack) = state.packages_all.iter_mut().find(|p| p.name == name) {
-            pack.provides = provides;
         }
     }
 }
@@ -968,7 +1005,7 @@ fn get_packages_command(command: &str) -> Result<Vec<Package>, AppError> {
                     _ => Reason::Other(value.to_string()),
                 }
             }
-            "Install Date" => pack.installed = to_date(value),
+            "Install Date" => pack.installed = Some(to_date(value)),
             "Description" => pack.description = value.to_string(),
             "Validated By" => pack.validated = value == "Signature",
             _ => {}
@@ -984,18 +1021,6 @@ fn get_all_packages() -> Result<Vec<Package>, AppError> {
     Ok(packs)
 }
 
-fn update_all_with_installed(all: &mut Vec<Package>, installed: &[Package]) {
-    let map = installed
-        .iter()
-        .map(|p| (p.name.clone(), p.installed.clone()))
-        .collect::<std::collections::HashMap<_, _>>();
-    //now update installed status
-    for pack in all.iter_mut() {
-        if map.contains_key(&pack.name) {
-            pack.installed = map[&pack.name].clone();
-        }
-    }
-}
 fn get_installed_packages() -> Result<Vec<Package>, AppError> {
     get_packages_command("-Qi")
 }
@@ -1048,7 +1073,7 @@ use ratatui::{
     text::Line,
     widgets::{Block, Borders, Clear, Paragraph, Row, Table, Tabs, Widget},
 };
-use std::{error::Error, io::Write, process::Command, time::Instant};
+use std::{collections::HashSet, error::Error, io::Write, process::Command, time::Instant};
 use structs::{AppState, EventResult, Focus, Package, Reason};
 
 use crate::{
