@@ -1,7 +1,7 @@
 use crate::utils::natural_cmp;
 use std::isize;
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     layout::Constraint,
     style::{Color, Style, Stylize},
@@ -61,6 +61,12 @@ impl TableWidget {
             searching: false,
         }
     }
+    pub fn with_no_focus(self) -> Self {
+        Self {
+            focus_type: TableFocus::Unfocused,
+            ..self
+        }
+    }
 
     ///return true if event was handled and should not be processed further
     pub(crate) fn handle_key_event(&mut self, key: &KeyEvent) -> bool {
@@ -101,9 +107,19 @@ impl TableWidget {
                     } else {
                         self.selected.push(selected);
                     }
+                    self.safe_move(1);
                 }
             }
             KeyCode::Char('/') => self.searching = true,
+            KeyCode::Char('a') => {
+                if key.modifiers.contains(KeyModifiers::CONTROL) {
+                    if self.get_selected().len() == self.filtered.len() {
+                        self.clear_selection();
+                    } else {
+                        self.select_all();
+                    }
+                }
+            }
 
             _ => {}
         }
@@ -236,7 +252,7 @@ impl TableWidget {
         self.title = Some(title.to_string());
     }
 
-    pub(crate) fn select(&mut self, new_index: Option<usize>) {
+    pub(crate) fn set_current(&mut self, new_index: Option<usize>) {
         self.table_state.select(new_index)
     }
 
@@ -244,12 +260,6 @@ impl TableWidget {
         &self.filtered
     }
 
-    pub(crate) fn current(&self) -> Option<&TableRow> {
-        self.table_state
-            .selected()
-            .map(|i| self.filtered.get(i))
-            .flatten()
-    }
     pub fn clear_search(&mut self) {
         self.search_text_area.select_all();
         self.search_text_area.cut();
@@ -295,6 +305,13 @@ impl TableWidget {
         } else {
             self.table_state.select(Some(0));
         }
+    }
+
+    pub(crate) fn get_current(&self) -> Option<&TableRow> {
+        self.table_state
+            .selected()
+            .map(|i| self.filtered.get(i))
+            .flatten()
     }
 }
 

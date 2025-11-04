@@ -4,24 +4,27 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{layout::Constraint, style::Color, widgets::Widget};
 
 use crate::{
-    structs::{EventCommand, EventResult, PackageUpdate},
+    structs::{
+        event::{EventCommand, EventResult},
+        package::Package,
+    },
     version::ChangeType,
     widgets::{
-        Commands,
+        Commands, CurrentPackage,
         table::{TableRow, TableWidget},
     },
 };
 
 ///Keep state inside the widget. Need to store in your app state
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct UpdateWidget {
-    data: Vec<PackageUpdate>,
-    filtered: Vec<PackageUpdate>,
+    data: Vec<Package>,
+    filtered: Vec<Package>,
     table: TableWidget,
     filter: Option<ChangeType>,
 }
-impl UpdateWidget {
-    pub fn new() -> Self {
+impl Default for UpdateWidget {
+    fn default() -> Self {
         Self {
             data: vec![],
             filtered: vec![],
@@ -29,16 +32,19 @@ impl UpdateWidget {
             table: TableWidget::new(
                 &["Name", "Installed", "Latest", "Type"],
                 vec![
-                    Constraint::Percentage(100),
+                    Constraint::Percentage(50),
                     Constraint::Length(25),
                     Constraint::Length(25),
-                    Constraint::Length(20),
+                    Constraint::Length(10),
                 ],
             ),
         }
     }
-    pub fn set_data(&mut self, data: &[PackageUpdate]) {
-        if data == self.data.as_slice() {
+}
+impl UpdateWidget {
+    pub fn set_data(&mut self, data: &[Package]) {
+        //check if data is the same as current data
+        if data == &self.data {
             return;
         }
         self.data = data.iter().cloned().collect();
@@ -46,19 +52,12 @@ impl UpdateWidget {
         self.filter_data();
     }
     pub fn filter_data(&mut self) {
-        match &self.filter {
-            Some(change_type) => {
-                self.filtered = self
-                    .data
-                    .iter()
-                    .filter(|pkg| &pkg.change_type >= change_type)
-                    .cloned()
-                    .collect();
-            }
-            None => {
-                self.filtered = self.data.clone();
-            }
-        }
+        self.filtered = self
+            .data
+            .iter()
+            .filter(|pkg| &pkg.change_type >= &self.filter)
+            .cloned()
+            .collect();
 
         self.table.set_data(
             self.filtered
@@ -66,11 +65,14 @@ impl UpdateWidget {
                 .map(|r| TableRow {
                     cells: vec![
                         r.name.clone(),
-                        r.current_version.clone(),
-                        r.new_version.clone(),
-                        format!("{:?}", r.change_type),
+                        r.version.clone(),
+                        r.new_version.clone().expect("all updates have new_version"),
+                        format!(
+                            "{}",
+                            r.change_type.as_ref().unwrap_or_else(|| &ChangeType::Major)
+                        ),
                     ],
-                    highlight: if r.change_type >= ChangeType::Major {
+                    highlight: if r.change_type >= Some(ChangeType::Major) {
                         Some(Color::Green)
                     } else {
                         None
@@ -78,14 +80,10 @@ impl UpdateWidget {
                 })
                 .collect(),
         );
-    }
-}
-
-impl Widget for UpdateWidget {
-    fn render(mut self, area: ratatui::layout::Rect, buf: &mut ratatui::buffer::Buffer) {
         let mut map: HashMap<ChangeType, usize> = Default::default();
         for u in &self.data {
-            *map.entry(u.change_type.clone()).or_default() += 1;
+            *map.entry(u.change_type.clone().expect("All updates have change type"))
+                .or_default() += 1;
         }
         let mut counts = map
             .iter()
@@ -97,7 +95,7 @@ impl Widget for UpdateWidget {
             .iter()
             .map(|(k, v)| format!("{} {}", v, k))
             .collect::<Vec<String>>();
-        let filters = if let Some(f) = self.filter {
+        let filters = if let Some(f) = &self.filter {
             format!("Filters: >={:?}", f)
         } else {
             String::new()
@@ -114,21 +112,22 @@ impl Widget for UpdateWidget {
             format!("{filters}")
         );
         self.table.set_title(&message);
+    }
+}
 
+impl Widget for UpdateWidget {
+    fn render(self, area: ratatui::layout::Rect, buf: &mut ratatui::buffer::Buffer) {
         self.table.render(area, buf);
     }
 }
 
 impl Commands for UpdateWidget {
-    fn command_descriptions(&self) -> Vec<(&str, &str)> {
+    fn command_descriptions(&self) -> Vec<(&str, &str, &str)> {
         vec![
-            ("u", "Update selected packages"),
-            ("m", "Show major changes and up"),
-            ("n", "Show minor changes and up"),
-            ("a", "Show all changes"),
-            ("/", "Search table"),
-            ("Esc", "Clear selection and filters"),
-            ("Ctrl+a", "Toggle select all"),
+            ("u", "Update selected packages", "Update"),
+            ("m", "Show major changes and up", "Major"),
+            ("n", "Show minor changes and up", "Minor"),
+            ("a", "Show all changes", "All"),
         ]
     }
     fn handle_key_event(&mut self, key: &KeyEvent) -> Option<EventResult> {
@@ -147,21 +146,12 @@ impl Commands for UpdateWidget {
                     .cloned()
                     .collect();
 
-                return Some(EventResult::Queue(vec![
-                    //select all visible updates
-                    EventResult::Select(selected_names),
-                    //sync selected updates
-                    EventResult::Command(EventCommand::UpdateSelected),
-                ]));
+                return Some(EventResult::Command(EventCommand::InstallOrUpdateSelected(
+                    selected_names,
+                )));
             }
             KeyCode::Char('a') => {
-                if key.modifiers.contains(KeyModifiers::CONTROL) {
-                    if self.table.get_selected().len() == self.filtered.len() {
-                        self.table.clear_selection();
-                    } else {
-                        self.table.select_all();
-                    }
-                } else {
+                if !key.modifiers.contains(KeyModifiers::CONTROL) {
                     self.filter = None;
                     self.filter_data();
                 }
@@ -176,7 +166,6 @@ impl Commands for UpdateWidget {
                 self.filter_data();
             }
             KeyCode::Esc => {
-                self.table.clear_selection();
                 self.filter = None;
                 self.filter_data();
             }
@@ -185,5 +174,13 @@ impl Commands for UpdateWidget {
         }
 
         None
+    }
+}
+
+impl CurrentPackage for UpdateWidget {
+    fn current_package(&self) -> Option<&Package> {
+        self.table
+            .get_current()
+            .and_then(|a| self.filtered.iter().find(|p| p.name == a.cells[0]))
     }
 }
