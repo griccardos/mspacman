@@ -330,7 +330,7 @@ fn draw_help(state: &mut AppState, f: &mut Frame) -> Result<(), Box<dyn Error>> 
     Ok(())
 }
 fn draw_status(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Box<dyn Error>> {
-    let mut text = vec![" ?:Help", "Tab:Change view", "/:Search"];
+    let mut text = vec![" ?:Help", "Tab:Change view", "/:Search", "s:Sync"];
 
     let extra = match state.tab {
         Tab::Updates => state.update_widget.command_descriptions(),
