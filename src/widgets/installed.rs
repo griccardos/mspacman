@@ -279,15 +279,25 @@ impl InstalledWidget {
         );
         self.goto_package(&new_name);
     }
+
+    pub(crate) fn goto_package_by_name(&mut self, name: &String) {
+        let ind = self
+            .centre
+            .rows()
+            .iter()
+            .position(|p| &p.cells[0] == name)
+            .unwrap_or(0);
+        self.centre.set_current(Some(ind));
+    }
 }
 
 impl Commands for InstalledWidget {
     fn command_descriptions(&self) -> Vec<(&str, &str, &str)> {
         vec![
             ("r", "Remove selected packages", "Remove"),
-            ("e", "Explicitly installed packages", "Explicit"),
-            ("f", "Foreign packages", "Foreign"),
-            ("o", "Orphaned packages", "Orphans"),
+            ("e", "View explicitly installed packages", "Explicit"),
+            ("f", "View foreign packages", "Foreign"),
+            ("o", "View orphaned packages", "Orphans"),
             ("p", "View files provided by package", "Provides"),
             ("P", "Focus providing packages table", ""),
             ("←/h", "Left dependency table", ""),

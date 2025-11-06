@@ -4,6 +4,7 @@ pub enum EventResult {
     Quit,
     Command(EventCommand),
     NeedsUpdate,
+    GotoInstalled(String),
 }
 
 #[derive(PartialEq)]

@@ -1,14 +1,15 @@
+use std::time::Duration;
+
 use crate::{
-    structs::{package::Package, tab::Tab},
+    structs::{package::Package, tab::Tab, timedstring::TimedString},
     widgets::{installed::InstalledWidget, packages::PackagesWidget, update::UpdateWidget},
 };
 
-#[derive(Debug)]
 pub struct AppState {
     pub packages: Vec<Package>,
     pub show_info: bool,
     pub show_help: bool,
-    pub message: String,
+    pub message: TimedString,
 
     //for command
     pub command: String,
@@ -25,7 +26,7 @@ impl Default for AppState {
             packages: Vec::new(),
             show_info: true,
             show_help: false,
-            message: String::new(),
+            message: TimedString::new("", Duration::from_secs(5)),
             command: String::new(),
             tab: Tab::Installed,
             update_widget: UpdateWidget::default(),

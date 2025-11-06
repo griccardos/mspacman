@@ -13,7 +13,10 @@ use ratatui::{
     text::Text,
     widgets::{Block, Borders, Clear, Paragraph, Row, Table, Tabs, Widget},
 };
-use std::{error::Error, time::Instant};
+use std::{
+    error::Error,
+    time::{Duration, Instant},
+};
 
 use crate::{
     error::AppError,
@@ -23,6 +26,7 @@ use crate::{
         event::{EventCommand, EventResult},
         package::Package,
         tab::Tab,
+        timedstring::TimedString,
     },
     widgets::{Commands, CurrentPackage},
 };
@@ -84,19 +88,24 @@ fn run(terminal: &mut DefaultTerminal, mut state: AppState) -> Result<(), AppErr
             EventResult::None => {}
             EventResult::Quit => return Ok(()),
             EventResult::Command(c) => {
-                state.message = "Running command...".to_string();
+                state.message = TimedString::new("Running command...", Duration::from_secs(10));
                 let _ = goto_screen(false, terminal);
                 let res = run_command(&mut state, c);
                 let _ = goto_screen(true, terminal);
                 if let Err(e) = res {
-                    state.message = e.to_string();
+                    state.message =
+                        TimedString::new(e.to_string().as_str(), Duration::from_secs(10));
                 } else {
-                    state.message = "Command completed.".to_string();
+                    state.message = TimedString::new("Command completed.", Duration::from_secs(10));
                 }
             }
             EventResult::NeedsUpdate => {
                 refresh_packages_and_update_tables(&mut state)?;
-            } //EventResult::Queue(_) => unreachable!(),
+            }
+            EventResult::GotoInstalled(name) => {
+                state.tab = Tab::Installed;
+                state.installed_widget.goto_package_by_name(&name);
+            }
         }
     }
 }
@@ -273,10 +282,11 @@ fn draw_help(state: &mut AppState, f: &mut Frame) -> Result<(), Box<dyn Error>> 
         "q: Quit".to_string(),
         "s: Sync Database".to_string(),
         "/: Search".to_string(),
-        "i: Toggle Info Panel".to_string(),
+        "Space: Select/Deselect item".to_string(),
         "Ctrl+a: Toggle select all".to_string(),
         "Esc: Clear Filter".to_string(),
         "1-9: Sort column".to_string(),
+        "i: Toggle Info Panel".to_string(),
         "".to_string(),
     ];
 
@@ -335,12 +345,15 @@ fn draw_status(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Bo
 
     text.extend(formatted.iter().map(|s| s.as_str()));
 
-    let layout =
-        Layout::horizontal([Constraint::Percentage(80), Constraint::Percentage(20)]).split(rect);
+    let layout = Layout::horizontal([
+        Constraint::Percentage(100),
+        Constraint::Length(state.message.len() as u16 + 2),
+    ])
+    .split(rect);
 
     let info = Paragraph::new(text.join("  ")).style(Style::default().fg(Color::Yellow));
     f.render_widget(&info, layout[0]);
-    Text::raw(&state.message)
+    Text::raw(state.message.as_ref())
         .style(Style::default().fg(Color::Red))
         .render(layout[1], f.buffer_mut());
 

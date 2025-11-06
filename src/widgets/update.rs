@@ -124,6 +124,7 @@ impl Commands for UpdateWidget {
             ("m", "Show major changes and up", "Major"),
             ("n", "Show minor changes and up", "Minor"),
             ("a", "Show all changes", "All"),
+            ("Enter", "View dependencies", "Dependencies"),
         ]
     }
     fn handle_key_event(&mut self, key: &KeyEvent) -> Option<EventResult> {
@@ -164,6 +165,12 @@ impl Commands for UpdateWidget {
             KeyCode::Esc => {
                 self.filter = None;
                 self.filter_data();
+            }
+            KeyCode::Enter => {
+                //goto installed
+                if let Some(pkg) = self.current_package() {
+                    return Some(EventResult::GotoInstalled(pkg.name.clone()));
+                }
             }
 
             _ => {}

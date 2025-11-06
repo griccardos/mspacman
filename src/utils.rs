@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 
-///Natural sort comparison of two strings
-///So that "file2" < "file10"
+/// Natural sort comparison of two strings
+/// So that "file2" < "file10"
 /// Split into number and string tokens
 /// Compare number tokens numerically, string tokens lexicographically
 pub fn natural_cmp(a: &str, b: &str) -> Ordering {

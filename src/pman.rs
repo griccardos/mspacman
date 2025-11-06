@@ -51,7 +51,7 @@ pub fn run_command(state: &mut AppState, command: EventCommand) -> Result<(), Ap
         .write_all(format!("\nRunning command: {} {}\n", comm, args.join(" ")).as_bytes())?;
     //try run command as is
     let res = Command::new(comm).args(&args).status()?;
-
+    let mut ret = Ok(());
     if !res.success() {
         std::io::stdout().write_all("running sudo\n".as_bytes())?;
         //run as sudo
@@ -60,6 +60,7 @@ pub fn run_command(state: &mut AppState, command: EventCommand) -> Result<(), Ap
         let res = Command::new("sudo").args(&args).status()?;
         if !res.success() {
             std::io::stdout().write_all("Failed to run command".as_bytes())?;
+            ret = Err(String::from("Failed to run command").into());
         }
     }
     std::io::stdout().write_all("\nPress enter to continue...".as_bytes())?;
@@ -68,7 +69,7 @@ pub fn run_command(state: &mut AppState, command: EventCommand) -> Result<(), Ap
 
     refresh_packages_and_update_tables(state)?;
 
-    Ok(())
+    ret
 }
 
 pub fn combine_packages(

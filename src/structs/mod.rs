@@ -6,3 +6,4 @@ pub mod package;
 pub mod packageupdate;
 pub mod reason;
 pub mod tab;
+pub mod timedstring;
