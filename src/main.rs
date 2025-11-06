@@ -84,14 +84,14 @@ fn run(terminal: &mut DefaultTerminal, mut state: AppState) -> Result<(), AppErr
             EventResult::None => {}
             EventResult::Quit => return Ok(()),
             EventResult::Command(c) => {
-                state.message = format!("Running command...");
+                state.message = "Running command...".to_string();
                 let _ = goto_screen(false, terminal);
                 let res = run_command(&mut state, c);
                 let _ = goto_screen(true, terminal);
                 if let Err(e) = res {
                     state.message = e.to_string();
                 } else {
-                    state.message = format!("Command completed.");
+                    state.message = "Command completed.".to_string();
                 }
             }
             EventResult::NeedsUpdate => {

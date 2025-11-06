@@ -35,10 +35,10 @@ impl Default for PackagesWidget {
 
 impl PackagesWidget {
     pub fn set_data(&mut self, data: &[Package]) {
-        if data == &self.data {
+        if data == self.data {
             return;
         }
-        self.data = data.iter().cloned().collect();
+        self.data = data.to_vec();
         self.table.set_data(
             self.data
                 .iter()
@@ -85,19 +85,16 @@ impl Commands for PackagesWidget {
             self.update_title(); //may have filtered
             return Some(EventResult::None);
         }
-        match key.code {
-            KeyCode::Char('u') => {
-                let packs = self
-                    .table
-                    .get_selected()
-                    .iter()
-                    .map(|&i| i.cells[0].clone())
-                    .collect::<Vec<_>>();
-                return Some(EventResult::Command(EventCommand::InstallOrUpdateSelected(
-                    packs,
-                )));
-            }
-            _ => {}
+        if let KeyCode::Char('u') = key.code {
+            let packs = self
+                .table
+                .get_selected()
+                .iter()
+                .map(|&i| i.cells[0].clone())
+                .collect::<Vec<_>>();
+            return Some(EventResult::Command(EventCommand::InstallOrUpdateSelected(
+                packs,
+            )));
         }
 
         None

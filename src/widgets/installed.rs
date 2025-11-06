@@ -313,7 +313,7 @@ impl Commands for InstalledWidget {
                     .centre
                     .get_selected()
                     .into_iter()
-                    .filter_map(|c| c.cells.get(0))
+                    .filter_map(|c| c.cells.first())
                     .cloned()
                     .collect();
 
@@ -380,9 +380,7 @@ enum FocusedTable {
 
 impl CurrentPackage for InstalledWidget {
     fn current_package(&self) -> Option<&Package> {
-        let Some(curr) = self.centre.get_current() else {
-            return None;
-        };
+        let curr = self.centre.get_current()?;
         self.data.iter().find(|p| p.name == curr.cells[0])
     }
 }

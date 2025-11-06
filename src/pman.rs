@@ -17,10 +17,10 @@ use crate::{
 
 pub fn refresh_packages_and_update_tables(state: &mut AppState) -> Result<(), AppError> {
     //run these in parallel
-    let jh1 = std::thread::spawn(|| get_installed_packages());
-    let jh2 = std::thread::spawn(|| get_all_packages());
-    let jh3 = std::thread::spawn(|| get_updates());
-    let jh4 = std::thread::spawn(|| get_provides());
+    let jh1 = std::thread::spawn(get_installed_packages);
+    let jh2 = std::thread::spawn(get_all_packages);
+    let jh3 = std::thread::spawn(get_updates);
+    let jh4 = std::thread::spawn(get_provides);
 
     //now join threads
     let installed = jh1.join().expect("Thread error")?;

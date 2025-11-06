@@ -1,5 +1,4 @@
 use crate::utils::natural_cmp;
-use std::isize;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
@@ -269,8 +268,7 @@ impl TableWidget {
         let old_selected = self
             .table_state
             .selected()
-            .map(|i| self.filtered.get(i).cloned())
-            .flatten();
+            .and_then(|i| self.filtered.get(i).cloned());
 
         let filter = self.get_filter();
         if filter.is_empty() {
@@ -288,16 +286,15 @@ impl TableWidget {
                 .collect();
         }
         //try find old selected in new filtered
-        if let Some(old_selected) = old_selected {
-            if let Some((i, _)) = self
+        if let Some(old_selected) = old_selected
+            && let Some((i, _)) = self
                 .filtered
                 .iter()
                 .enumerate()
                 .find(|(_, r)| *r == &old_selected)
-            {
-                self.table_state.select(Some(i));
-                return;
-            }
+        {
+            self.table_state.select(Some(i));
+            return;
         }
         //else select first
         if self.filtered.is_empty() {
@@ -310,8 +307,7 @@ impl TableWidget {
     pub(crate) fn get_current(&self) -> Option<&TableRow> {
         self.table_state
             .selected()
-            .map(|i| self.filtered.get(i))
-            .flatten()
+            .and_then(|i| self.filtered.get(i))
     }
 }
 
@@ -338,7 +334,7 @@ impl Widget for TableWidget {
             TableFocus::Unfocused => Color::Gray,
         };
 
-        let footer = if self.selected.len() == 0 {
+        let footer = if self.selected.is_empty() {
             String::new()
         } else {
             format!("{} selected", self.selected.len())
@@ -372,8 +368,8 @@ impl Widget for TableWidget {
                             Sort::Asc if self.sort_by.0 == i => format!("{} ↑", c),
                             Sort::Desc if self.sort_by.0 == i => format!("{} ↓", c),
                             _ => c,
-                        };
-                        let c = format!("{}", c);
+                        }
+                        .to_string();
                         Cell::from(c).black()
                     })
                     .collect::<Row>()

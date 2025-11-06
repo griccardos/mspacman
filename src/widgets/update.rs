@@ -44,10 +44,10 @@ impl Default for UpdateWidget {
 impl UpdateWidget {
     pub fn set_data(&mut self, data: &[Package]) {
         //check if data is the same as current data
-        if data == &self.data {
+        if data == self.data {
             return;
         }
-        self.data = data.iter().cloned().collect();
+        self.data = data.to_vec();
         self.filtered = self.data.clone();
         self.filter_data();
     }
@@ -55,7 +55,7 @@ impl UpdateWidget {
         self.filtered = self
             .data
             .iter()
-            .filter(|pkg| &pkg.change_type >= &self.filter)
+            .filter(|pkg| pkg.change_type >= self.filter)
             .cloned()
             .collect();
 
@@ -67,10 +67,7 @@ impl UpdateWidget {
                         r.name.clone(),
                         r.version.clone(),
                         r.new_version.clone().expect("all updates have new_version"),
-                        format!(
-                            "{}",
-                            r.change_type.as_ref().unwrap_or_else(|| &ChangeType::Major)
-                        ),
+                        format!("{}", r.change_type.as_ref().unwrap_or(&ChangeType::Major)),
                     ],
                     highlight: if r.change_type >= Some(ChangeType::Major) {
                         Some(Color::Green)
@@ -102,14 +99,13 @@ impl UpdateWidget {
         };
 
         let message = format!(
-            "{} Updates ({}) {}",
+            "{} Updates ({}) {filters}",
             self.data.len(),
             counts
                 .iter()
                 .map(|s| s.as_str())
                 .collect::<Vec<&str>>()
                 .join(", "),
-            format!("{filters}")
         );
         self.table.set_title(&message);
     }
@@ -142,7 +138,7 @@ impl Commands for UpdateWidget {
                     .table
                     .get_selected()
                     .into_iter()
-                    .filter_map(|c| c.cells.get(0))
+                    .filter_map(|c| c.cells.first())
                     .cloned()
                     .collect();
 
