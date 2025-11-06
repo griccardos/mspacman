@@ -8,7 +8,7 @@ pub mod widgets;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::{
     DefaultTerminal, Frame,
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Style},
     text::Text,
     widgets::{Block, Borders, Clear, Paragraph, Row, Table, Tabs, Widget},
@@ -58,16 +58,19 @@ fn run(terminal: &mut DefaultTerminal, mut state: AppState) -> Result<(), AppErr
     loop {
         terminal.draw(|f| {
             let _start = Instant::now();
+            let info = if state.show_info { 5 } else { 0 };
 
             use Constraint::{Length, Min};
-            let vertical = Layout::vertical([Length(3), Min(0), Length(1)]);
-            let [header_area, inner_area, footer_area] = vertical.areas(f.area());
+            let vertical = Layout::vertical([Length(3), Min(0), Length(info), Length(1)]);
+            let [header_area, inner_area, info_area, footer_area] = vertical.areas(f.area());
 
             draw_tabs(&state, f, header_area);
+
             match state.tab {
                 Tab::Installed | Tab::Packages => draw_packages(&mut state, f, inner_area),
                 Tab::Updates => draw_updates(&mut state, f, inner_area),
             }
+            draw_info(&mut state, f, info_area).unwrap();
             draw_status(&mut state, f, footer_area).unwrap();
             draw_help(&mut state, f).unwrap();
 
@@ -127,25 +130,11 @@ fn draw_updates(state: &mut AppState, f: &mut Frame<'_>, area: Rect) {
 }
 
 fn draw_packages(state: &mut AppState, f: &mut Frame<'_>, area: Rect) {
-    let info = if state.show_info { 5 } else { 0 };
-
-    let top_bottom = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(100), Constraint::Min(info)])
-        .split(area);
-
     if state.tab == Tab::Installed {
-        state
-            .installed_widget
-            .clone()
-            .render(top_bottom[0], f.buffer_mut());
+        state.installed_widget.clone().render(area, f.buffer_mut());
     } else if state.tab == Tab::Packages {
-        state
-            .packages_widget
-            .clone()
-            .render(top_bottom[0], f.buffer_mut());
+        state.packages_widget.clone().render(area, f.buffer_mut());
     }
-    draw_info(state, f, top_bottom[1]).unwrap();
 }
 
 fn handle_event(state: &mut AppState) -> Result<EventResult, AppError> {
@@ -284,6 +273,7 @@ fn draw_help(state: &mut AppState, f: &mut Frame) -> Result<(), Box<dyn Error>> 
         "q: Quit".to_string(),
         "s: Sync Database".to_string(),
         "/: Search".to_string(),
+        "i: Toggle Info Panel".to_string(),
         "Ctrl+a: Toggle select all".to_string(),
         "Esc: Clear Filter".to_string(),
         "1-9: Sort column".to_string(),
@@ -306,7 +296,7 @@ fn draw_help(state: &mut AppState, f: &mut Frame) -> Result<(), Box<dyn Error>> 
 
     // Calculate the block size (1/3 of the screen size)
     let block_width = (size.width / 3).max(50);
-    let block_height = (size.height / 3).min(22).min(commands.len() as u16 + 2);
+    let block_height = commands.len() as u16 + 2;
 
     // Calculate the block position (centered)
     let block_x = (size.width - block_width) / 2;
