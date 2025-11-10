@@ -13,4 +13,5 @@ pub enum EventCommand {
     InstallOrUpdateSelected(Vec<String>),
     QuerySelected(Vec<String>),
     SyncDatabase,
+    SyncAndUpdateAll,
 }

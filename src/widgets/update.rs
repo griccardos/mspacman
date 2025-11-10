@@ -121,6 +121,7 @@ impl Commands for UpdateWidget {
     fn command_descriptions(&self) -> Vec<(&str, &str, &str)> {
         vec![
             ("u", "Update selected packages", "Update"),
+            ("U", "Update all packages", "Update All"),
             ("m", "Show major changes and up", "Major"),
             ("n", "Show minor changes and up", "Minor"),
             ("a", "Show all changes", "All"),
@@ -146,6 +147,9 @@ impl Commands for UpdateWidget {
                 return Some(EventResult::Command(EventCommand::InstallOrUpdateSelected(
                     selected_names,
                 )));
+            }
+            KeyCode::Char('U') => {
+                return Some(EventResult::Command(EventCommand::SyncAndUpdateAll));
             }
             KeyCode::Char('a') => {
                 if !key.modifiers.contains(KeyModifiers::CONTROL) {

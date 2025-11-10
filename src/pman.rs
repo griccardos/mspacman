@@ -40,6 +40,7 @@ pub fn run_command(state: &mut AppState, command: EventCommand) -> Result<(), Ap
         EventCommand::InstallOrUpdateSelected(packs) => ("pacman", vec!["-S"], true, packs),
         EventCommand::QuerySelected(packs) => ("pacman", vec!["-Qi"], true, packs),
         EventCommand::SyncDatabase => ("pacman", vec!["-Sy"], false, vec![]),
+        EventCommand::SyncAndUpdateAll => ("pacman", vec!["-Syu"], false, vec![]),
     };
     if needs_package_list && packs.is_empty() {
         return Err(String::from("No packages selected").into());
