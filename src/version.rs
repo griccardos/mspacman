@@ -62,7 +62,9 @@ impl From<&str> for Version {
 
 impl Version {
     pub fn change_type(&self, other: &Version) -> ChangeType {
-        if self.major != other.major {
+        if self.epoch != other.epoch {
+            ChangeType::Epoch
+        } else if self.major != other.major {
             ChangeType::Major
         } else if self.minor != other.minor {
             ChangeType::Minor
