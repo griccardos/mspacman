@@ -213,20 +213,20 @@ impl TableWidget {
         let sort_col = self.sort_by.0;
         let sort_dir = self.sort_by.1;
 
-        //strict sort
-        /*
-        match sort_dir {
-            Sort::Asc => self.data.sort_by(|a, b| a[sort_col].cmp(&b[sort_col])),
-            Sort::Desc => self.data.sort_by(|a, b| b[sort_col].cmp(&a[sort_col])),
-        }*/
         //natural sort
         match sort_dir {
-            Sort::Asc => self
-                .filtered
-                .sort_by(|a, b| natural_cmp(&a.cells[sort_col], &b.cells[sort_col])),
-            Sort::Desc => self
-                .filtered
-                .sort_by(|a, b| natural_cmp(&b.cells[sort_col], &a.cells[sort_col])),
+            Sort::Asc => self.filtered.sort_by(|a, b| {
+                natural_cmp(
+                    &a.cells[sort_col].replace(",", "").trim(), //replace , to sort thousand numbers
+                    &b.cells[sort_col].replace(",", "").trim(),
+                )
+            }),
+            Sort::Desc => self.filtered.sort_by(|a, b| {
+                natural_cmp(
+                    &b.cells[sort_col].replace(",", "").trim(),
+                    &a.cells[sort_col].replace(",", "").trim(),
+                )
+            }),
         }
     }
 

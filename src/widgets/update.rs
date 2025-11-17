@@ -8,6 +8,7 @@ use crate::{
         event::{EventCommand, EventResult},
         package::Package,
     },
+    utils::thousands,
     version::ChangeType,
     widgets::{
         Commands, CurrentPackage,
@@ -30,12 +31,13 @@ impl Default for UpdateWidget {
             filtered: vec![],
             filter: None,
             table: TableWidget::new(
-                &["Name", "Installed", "Latest", "Type"],
+                &["Name", "Installed", "Latest", "Type", "        Size"],
                 vec![
                     Constraint::Percentage(50),
                     Constraint::Length(25),
                     Constraint::Length(25),
                     Constraint::Length(10),
+                    Constraint::Length(15),
                 ],
             ),
         }
@@ -68,6 +70,10 @@ impl UpdateWidget {
                         r.version.clone(),
                         r.new_version.clone().expect("all updates have new_version"),
                         format!("{}", r.change_type.as_ref().unwrap_or(&ChangeType::Major)),
+                        format!(
+                            "{: >15}",
+                            r.new_version_size.map(|a| thousands(a)).unwrap_or_default()
+                        ),
                     ],
                     highlight: if r.change_type >= Some(ChangeType::Major) {
                         Some(Color::Green)

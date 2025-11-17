@@ -28,7 +28,10 @@ pub fn refresh_packages_and_update_tables(state: &mut AppState) -> Result<(), Ap
     let updates = jh3.join().expect("Thread error")?;
     let provides = jh4.join().expect("Thread error")?;
 
-    state.packages = combine_packages(installed, all, updates, provides);
+    //get sizes once we have the updates
+    let sizes = get_update_size()?;
+
+    state.packages = combine_packages(installed, all, updates, provides, sizes);
 
     update_tables(state);
     Ok(())
@@ -78,6 +81,7 @@ pub fn combine_packages(
     all: Vec<Package>,
     updates: Vec<PackageUpdate>,
     provides: HashMap<String, Vec<String>>,
+    sizes: HashMap<String, usize>,
 ) -> Vec<Package> {
     //start with installed, this may include those not in repo
     let installed_names = installed
@@ -97,6 +101,10 @@ pub fn combine_packages(
         if let Some(p) = combined.iter_mut().find(|p| p.name == pack.name) {
             p.new_version = Some(pack.new_version.clone());
             p.change_type = Some(pack.change_type.clone());
+            //add size
+            if let Some(s) = sizes.get(&p.name) {
+                p.new_version_size = Some(*s);
+            }
         }
     }
     combined.sort_by(|a, b| natural_cmp(&a.name, &b.name));
@@ -131,6 +139,33 @@ pub fn get_provides() -> Result<HashMap<String, Vec<String>>, AppError> {
             acc
         },
     );
+    Ok(dict)
+}
+pub fn get_update_size() -> Result<HashMap<String, usize>, AppError> {
+    let output = Command::new("pacman")
+        .args(["-Su", "--print-format", "%n,%s"])
+        .output()?;
+    let output = String::from_utf8(output.stdout)?;
+    let vals = output
+        .lines()
+        .filter_map(|line| {
+            if let Some((pack, size)) = line.split_once(",") {
+                Some((
+                    pack.to_string(),
+                    size.to_string().parse::<usize>().unwrap_or_default(),
+                ))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<(String, usize)>>();
+    let dict = vals
+        .into_iter()
+        .fold(HashMap::<String, usize>::new(), |mut acc, (pack, size)| {
+            acc.entry(pack).or_insert(size);
+
+            acc
+        });
     Ok(dict)
 }
 

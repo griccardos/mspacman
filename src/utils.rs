@@ -1,5 +1,21 @@
 use std::cmp::Ordering;
 
+/// Format a number with thousands separators
+pub fn thousands(size: usize) -> String {
+    let mut str = size.to_string();
+    let mut pos = 1;
+    let mut thousand_count = 0;
+
+    while pos < str.len() {
+        if (pos - thousand_count) % 3 == 0 {
+            str.insert(str.len() - pos, ',');
+            thousand_count += 1;
+            pos += 1;
+        }
+        pos += 1
+    }
+    str
+}
 /// Natural sort comparison of two strings
 /// So that "file2" < "file10"
 /// Split into number and string tokens
@@ -80,5 +96,10 @@ mod tests {
         assert_eq!(natural_cmp("1.1.1", "1.2.1"), Ordering::Less);
         assert_eq!(natural_cmp("1.1.2", "1.2.1"), Ordering::Less);
         assert_eq!(natural_cmp("2.1.1", "1.1.1"), Ordering::Greater);
+
+        assert_eq!(natural_cmp("101551814", "317460852"), Ordering::Less);
+        assert_eq!(natural_cmp("101551814", "10000564123"), Ordering::Less);
+        assert_eq!(natural_cmp("101235555", "10406325"), Ordering::Greater);
+        assert_eq!(natural_cmp("101235555", "8219"), Ordering::Greater);
     }
 }

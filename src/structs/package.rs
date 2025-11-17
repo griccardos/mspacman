@@ -18,5 +18,6 @@ pub struct Package {
 
     //updates for available updates
     pub new_version: Option<String>,
+    pub new_version_size: Option<usize>,
     pub change_type: Option<ChangeType>,
 }
