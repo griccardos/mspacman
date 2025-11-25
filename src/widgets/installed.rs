@@ -89,16 +89,14 @@ impl InstalledWidget {
                 } else {
                     None
                 };
-                TableRow {
-                    cells: vec![
-                        pack.name.clone(),
-                        format!("{:?}", pack.reason),
-                        pack.required_by.len().to_string(),
-                        format!("{}", if pack.validated { "" } else { "X" }),
-                        pack.installed.clone().expect("filtered installed only"),
-                    ],
-                    highlight: highlighted,
-                }
+                TableRow::new(vec![
+                    pack.name.clone(),
+                    format!("{:?}", pack.reason),
+                    pack.required_by.len().to_string(),
+                    format!("{}", if pack.validated { "" } else { "X" }),
+                    pack.installed.clone().expect("filtered installed only"),
+                ])
+                .with_highlight(highlighted)
             })
             .collect();
 
@@ -180,10 +178,7 @@ impl InstalledWidget {
         let rows: Vec<TableRow> = pack
             .required_by
             .iter()
-            .map(|dep| TableRow {
-                cells: vec![dep.clone()],
-                highlight: None,
-            })
+            .map(|dep| TableRow::new(vec![dep.clone()]))
             .collect();
         self.right.set_data(rows);
         self.right.set_title(&format!("Required by {count}"));
@@ -199,10 +194,7 @@ impl InstalledWidget {
                     None => Some(Color::Red),
                 };
 
-                TableRow {
-                    cells: vec![dep.clone()],
-                    highlight: col,
-                }
+                TableRow::new(vec![dep.clone()]).with_highlight(col)
             })
             .collect();
         let count = pack.dependencies.len();
@@ -216,10 +208,7 @@ impl InstalledWidget {
             .provides
             .iter()
             .filter(|p| !p.ends_with('/'))
-            .map(|p| TableRow {
-                cells: vec![p.clone()],
-                highlight: None,
-            })
+            .map(|p| TableRow::new(vec![p.clone()]))
             .collect();
         self.provides.set_title(&format!("{} files", rows.len()));
         self.provides.set_data(rows);

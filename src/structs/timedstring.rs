@@ -14,7 +14,7 @@ impl TimedString {
             timestamp: std::time::Instant::now(),
         }
     }
-    pub fn len(&self) -> usize {
+    pub fn length(&self) -> usize {
         if self.timestamp.elapsed() > self.duration {
             0
         } else {

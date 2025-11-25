@@ -64,22 +64,24 @@ impl UpdateWidget {
         self.table.set_data(
             self.filtered
                 .iter()
-                .map(|r| TableRow {
-                    cells: vec![
+                .map(|r| {
+                    TableRow::new(vec![
                         r.name.clone(),
                         r.version.clone(),
                         r.new_version.clone().expect("all updates have new_version"),
                         format!("{}", r.change_type.as_ref().unwrap_or(&ChangeType::Major)),
                         format!(
                             "{: >15}",
-                            r.new_version_size.map(|a| thousands(a)).unwrap_or_default()
+                            r.new_version_size.map(thousands).unwrap_or_default()
                         ),
-                    ],
-                    highlight: if r.change_type >= Some(ChangeType::Major) {
-                        Some(Color::Green)
-                    } else {
-                        None
-                    },
+                    ])
+                    .with_highlight(
+                        if r.change_type >= Some(ChangeType::Major) {
+                            Some(Color::Green)
+                        } else {
+                            None
+                        },
+                    )
                 })
                 .collect(),
         );

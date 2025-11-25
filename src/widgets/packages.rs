@@ -42,17 +42,17 @@ impl PackagesWidget {
         self.table.set_data(
             self.data
                 .iter()
-                .map(|pkg| TableRow {
-                    cells: vec![
+                .map(|pkg| {
+                    TableRow::new(vec![
                         pkg.name.clone(),
                         pkg.installed.clone().unwrap_or_default(),
                         pkg.description.clone(),
-                    ],
-                    highlight: if pkg.installed.is_none() {
+                    ])
+                    .with_highlight(if pkg.installed.is_none() {
                         None
                     } else {
                         Some(Color::Green)
-                    },
+                    })
                 })
                 .collect(),
         );

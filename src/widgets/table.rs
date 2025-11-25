@@ -17,7 +17,7 @@ pub struct TableWidget {
     filtered: Vec<TableRow>,
     table_state: TableState,
     sort_by: (usize, Sort),
-    selected: Vec<usize>,
+    selected: Vec<Id>,
     title: Option<String>,
     focus_type: TableFocus,
     search_text_area: TextArea<'static>,
@@ -38,10 +38,32 @@ pub enum Sort {
     Desc,
 }
 
+#[derive(Debug, Clone, PartialEq, Copy)]
+pub struct Id(uuid::Uuid);
+impl Default for Id {
+    fn default() -> Self {
+        Self(uuid::Uuid::new_v4())
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct TableRow {
+    id: Id,
     pub cells: Vec<String>,
-    pub highlight: Option<Color>,
+    highlight: Option<Color>,
+}
+impl TableRow {
+    pub fn new(cells: Vec<String>) -> Self {
+        Self {
+            id: Id::default(),
+            cells,
+            highlight: None,
+        }
+    }
+    pub fn with_highlight(mut self, color: Option<Color>) -> Self {
+        self.highlight = color;
+        self
+    }
 }
 
 impl TableWidget {
@@ -101,12 +123,17 @@ impl TableWidget {
             }
             KeyCode::Char(' ') => {
                 if let Some(selected) = self.table_state.selected() {
-                    if self.selected.contains(&selected) {
-                        self.selected.retain(|&x| x != selected);
-                    } else {
-                        self.selected.push(selected);
+                    //get id of line
+                    if let Some(selected_row) = self.filtered.get(selected) {
+                        let id = selected_row.id;
+
+                        if self.selected.contains(&id) {
+                            self.selected.retain(|&x| x != id);
+                        } else {
+                            self.selected.push(id);
+                        }
+                        self.safe_move(1);
                     }
-                    self.safe_move(1);
                 }
             }
             KeyCode::Char('/') => self.searching = true,
@@ -150,7 +177,7 @@ impl TableWidget {
         let previous_selection = self
             .selected
             .iter()
-            .map(|&i| self.filtered[i].clone())
+            .filter_map(|&i| self.filtered.iter().find(|a| a.id == i).map(|r| r.id))
             .collect::<Vec<_>>();
         self.clear_selection();
 
@@ -165,8 +192,8 @@ impl TableWidget {
 
         //now restore selection if it exists in new dataset
         for row in previous_selection {
-            if let Some((i, _)) = self.filtered.iter().enumerate().find(|(_, r)| *r == &row) {
-                self.selected.push(i);
+            if let Some(trow) = self.filtered.iter().find(|r| r.id == row) {
+                self.selected.push(trow.id);
             }
         }
         self.update_filtered();
@@ -217,14 +244,14 @@ impl TableWidget {
         match sort_dir {
             Sort::Asc => self.filtered.sort_by(|a, b| {
                 natural_cmp(
-                    &a.cells[sort_col].replace(",", "").trim(), //replace , to sort thousand numbers
-                    &b.cells[sort_col].replace(",", "").trim(),
+                    a.cells[sort_col].replace(",", "").trim(), //replace , to sort thousand numbers
+                    b.cells[sort_col].replace(",", "").trim(),
                 )
             }),
             Sort::Desc => self.filtered.sort_by(|a, b| {
                 natural_cmp(
-                    &b.cells[sort_col].replace(",", "").trim(),
-                    &a.cells[sort_col].replace(",", "").trim(),
+                    b.cells[sort_col].replace(",", "").trim(),
+                    a.cells[sort_col].replace(",", "").trim(),
                 )
             }),
         }
@@ -235,16 +262,14 @@ impl TableWidget {
     }
 
     pub fn get_selected(&self) -> Vec<&TableRow> {
-        self.filtered
+        self.data
             .iter()
-            .enumerate()
-            .filter(|(i, _)| self.selected.contains(i))
-            .map(|(_, r)| r)
+            .filter(|r| self.selected.contains(&r.id))
             .collect::<Vec<&TableRow>>()
     }
 
     pub(crate) fn select_all(&mut self) {
-        self.selected = (0..self.filtered.len()).collect();
+        self.selected = self.filtered.iter().map(|a| a.id).collect();
     }
 
     pub fn set_title(&mut self, title: &str) {
@@ -344,9 +369,9 @@ impl Widget for TableWidget {
             .title_bottom(Line::from(footer).bg(selected_colour).black().underlined());
 
         let mut table = Table::new(
-            self.filtered.iter().enumerate().map(|(ri, item)| {
+            self.filtered.iter().map(|item| {
                 let mut row = Row::new(item.cells.iter().map(|c| c.as_str()));
-                if self.selected.contains(&ri) {
+                if self.selected.contains(&item.id) {
                     row = row.bg(selected_colour).fg(Color::Black).underlined();
                 } else if let Some(col) = item.highlight {
                     row = row.fg(col);

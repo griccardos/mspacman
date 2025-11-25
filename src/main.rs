@@ -347,7 +347,7 @@ fn draw_status(state: &mut AppState, f: &mut Frame, rect: Rect) -> Result<(), Bo
 
     let layout = Layout::horizontal([
         Constraint::Percentage(100),
-        Constraint::Length(state.message.len() as u16 + 2),
+        Constraint::Length(state.message.length() as u16 + 2),
     ])
     .split(rect);
 
