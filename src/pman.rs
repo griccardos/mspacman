@@ -20,18 +20,16 @@ pub fn refresh_packages_and_update_tables(state: &mut AppState) -> Result<(), Ap
     let jh1 = std::thread::spawn(get_installed_packages);
     let jh2 = std::thread::spawn(get_all_packages);
     let jh3 = std::thread::spawn(get_updates);
-    let jh4 = std::thread::spawn(get_provides);
 
     //now join threads
     let installed = jh1.join().expect("Thread error")?;
     let all = jh2.join().expect("Thread error")?;
     let updates = jh3.join().expect("Thread error")?;
-    let provides = jh4.join().expect("Thread error")?;
 
     //get sizes once we have the updates
     let sizes = get_update_size()?;
 
-    state.packages = combine_packages(installed, all, updates, provides, sizes);
+    state.packages = combine_packages(installed, all, updates, sizes);
 
     update_tables(state);
     Ok(())
@@ -80,7 +78,6 @@ pub fn combine_packages(
     installed: Vec<Package>,
     all: Vec<Package>,
     updates: Vec<PackageUpdate>,
-    provides: HashMap<String, Vec<String>>,
     sizes: HashMap<String, usize>,
 ) -> Vec<Package> {
     //start with installed, this may include those not in repo
@@ -109,37 +106,23 @@ pub fn combine_packages(
     }
     combined.sort_by(|a, b| natural_cmp(&a.name, &b.name));
 
-    //add files provided
-    for pack in combined.iter_mut() {
-        if let Some(prs) = provides.get(&pack.name) {
-            pack.provides = prs.clone();
-        }
-    }
-
     combined
 }
 
-pub fn get_provides() -> Result<HashMap<String, Vec<String>>, AppError> {
-    let output = Command::new("pacman").arg("-Ql").output()?;
+pub fn get_provides(pack_name: &str) -> Result<Vec<String>, AppError> {
+    let output = Command::new("pacman").arg("-Ql").arg(pack_name).output()?;
     let output = String::from_utf8(output.stdout)?;
     let vals = output
         .lines()
         .filter_map(|line| {
-            if let Some((pack, path)) = line.split_once(" ") {
-                Some((pack.to_string(), path.to_string()))
+            if let Some((_, path)) = line.split_once(" ") {
+                Some(path.to_string())
             } else {
                 None
             }
         })
-        .collect::<Vec<(String, String)>>();
-    let dict = vals.into_iter().fold(
-        HashMap::<String, Vec<String>>::new(),
-        |mut acc, (pack, path)| {
-            acc.entry(pack).or_default().push(path);
-            acc
-        },
-    );
-    Ok(dict)
+        .collect::<Vec<String>>();
+    Ok(vals)
 }
 pub fn get_update_size() -> Result<HashMap<String, usize>, AppError> {
     let output = Command::new("pacman")
@@ -186,7 +169,12 @@ pub fn get_packages_command(command: &str) -> Result<Vec<Package>, AppError> {
         //if listing provides:
         if !pack.name.is_empty() && line.starts_with(&pack.name) {
             if let Some((_, pr)) = line.split_once(" ") {
-                pack.provides.push(pr.to_string());
+                if pack.provides.is_none() {
+                    pack.provides = Some(vec![]);
+                }
+                if let Some(vec) = pack.provides.as_mut() {
+                    vec.push(pr.to_string());
+                }
             }
             continue;
         }

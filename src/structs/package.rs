@@ -6,7 +6,7 @@ pub struct Package {
     pub required_by: Vec<String>,
     pub optional_for: Vec<String>,
     pub dependencies: Vec<String>,
-    pub provides: Vec<String>,
+    pub provides: Option<Vec<String>>,
     pub reason: Reason,
     //info
     pub version: String,

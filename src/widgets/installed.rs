@@ -6,6 +6,7 @@ use ratatui::{
 };
 
 use crate::{
+    pman::get_provides,
     structs::{event::EventResult, package::Package, reason::Reason},
     widgets::{
         Commands, CurrentPackage,
@@ -64,6 +65,12 @@ impl InstalledWidget {
     pub fn set_data(&mut self, data: Vec<Package>) {
         self.data = data;
         self.filter_data();
+    }
+    fn reset_filters(&mut self) {
+        self.filter_orphans = false;
+        self.filter_foreign = false;
+        self.filter_explicit = false;
+        self.centre.clear_search();
     }
     fn filter_data(&mut self) {
         //installed
@@ -171,9 +178,15 @@ impl InstalledWidget {
     fn update_dependency_tables(&mut self) {
         //dependents
         let Some(pack) = self.current_package() else {
+            self.left.set_data(vec![]);
+            self.left.set_title("Depends on 0");
+            self.right.set_data(vec![]);
+            self.right.set_title("Required by 0");
+            self.provides.set_data(vec![]);
+            self.provides.set_title("0 files");
             return;
         };
-        let pack = pack.clone();
+        let mut pack = pack.clone();
         let count = pack.required_by.len();
         let rows: Vec<TableRow> = pack
             .required_by
@@ -204,20 +217,27 @@ impl InstalledWidget {
         self.left.set_data(rows);
 
         //provides
-        let rows: Vec<TableRow> = pack
-            .provides
-            .iter()
-            .filter(|p| !p.ends_with('/'))
-            .map(|p| TableRow::new(vec![p.clone()]))
-            .collect();
-        self.provides.set_title(&format!("{} files", rows.len()));
-        self.provides.set_data(rows);
+        if self.show_providing && pack.provides.is_none() {
+            if let Ok(prov) = get_provides(&pack.name) {
+                pack.provides = Some(prov);
+            }
+        }
+        if let Some(prov) = pack.provides {
+            let rows: Vec<TableRow> = prov
+                .iter()
+                .filter(|p| !p.ends_with('/'))
+                .map(|p| TableRow::new(vec![p.clone()]))
+                .collect();
+            self.provides.set_title(&format!("{} files", rows.len()));
+            self.provides.set_data(rows);
+        }
     }
     fn get_pack(&self, name: &str) -> Option<&Package> {
         self.data.iter().find(|p| p.name == name)
     }
     fn goto_package(&mut self, name: &str) {
         self.change_focus(FocusedTable::Centre);
+        self.reset_filters();
         //find new index in table rows
         let new_index = self
             .centre
@@ -227,6 +247,7 @@ impl InstalledWidget {
             .unwrap_or_default();
 
         self.centre.set_current(Some(new_index));
+        self.filter_data();
     }
     fn change_focus(&mut self, new_focus: FocusedTable) {
         if new_focus == self.focus {
@@ -270,13 +291,7 @@ impl InstalledWidget {
     }
 
     pub(crate) fn goto_package_by_name(&mut self, name: &String) {
-        let ind = self
-            .centre
-            .rows()
-            .iter()
-            .position(|p| &p.cells[0] == name)
-            .unwrap_or(0);
-        self.centre.set_current(Some(ind));
+        self.goto_package(name);
     }
 }
 
@@ -303,6 +318,7 @@ impl Commands for InstalledWidget {
             FocusedTable::Providing => self.provides.handle_key_event(_key),
         };
         if handled {
+            self.filter_data(); //the filter may have changed what is currently selected, so we want to update that
             return Some(EventResult::None);
         }
 
