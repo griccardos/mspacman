@@ -5,9 +5,9 @@ pub mod utils;
 pub mod version;
 pub mod widgets;
 
-use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::{
     DefaultTerminal, Frame,
+    crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Style},
     text::Text,
@@ -201,10 +201,10 @@ fn handle_event(state: &mut AppState) -> Result<EventResult, AppError> {
 }
 
 fn goto_screen(alternate: bool, terminal: &mut DefaultTerminal) -> Result<(), Box<dyn Error>> {
-    use crossterm::ExecutableCommand;
-    use crossterm::terminal::EnterAlternateScreen;
-    use crossterm::terminal::LeaveAlternateScreen;
-    use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+    use ratatui::crossterm::ExecutableCommand;
+    use ratatui::crossterm::terminal::EnterAlternateScreen;
+    use ratatui::crossterm::terminal::LeaveAlternateScreen;
+    use ratatui::crossterm::terminal::{disable_raw_mode, enable_raw_mode};
     use std::io::stdout;
 
     if alternate {

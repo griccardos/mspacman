@@ -1,6 +1,6 @@
 [package]
 name = "mspacman"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2024"
 license = "Apache-2.0"
 homepage = "https://github.com/griccardos/mspacman"
@@ -11,14 +11,12 @@ keywords = ["pacman", "archlinux", "arch", "package"]
 authors = ["griccardos"]
 categories = ["command-line-utilities"]
 
-
 [[bin]]
 name = "ms"
 path = "src/main.rs"
 
 [dependencies]
-crossterm = "0.28"                             #cannot upgrade until tui-textarea supports it
-jiff = "0.2"                                   #for dates
-ratatui = "0.29"
+ratatui = "0.29"                               #tui    
 tui-textarea = "0.7"                           #for text input
-uuid = { version = "1.18", features = ["v4"] }
+jiff = "0.2"                                   #for dates
+uuid = { version = "1.19", features = ["v4"] } #for unique ids

@@ -1,4 +1,4 @@
-use crossterm::event::KeyCode;
+use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{layout::Constraint, style::Color, widgets::Widget};
 
 use crate::{
@@ -80,7 +80,7 @@ impl Commands for PackagesWidget {
         vec![("u", "Update/Install package", "Update/Install")]
     }
 
-    fn handle_key_event(&mut self, key: &crossterm::event::KeyEvent) -> Option<EventResult> {
+    fn handle_key_event(&mut self, key: &KeyEvent) -> Option<EventResult> {
         if self.table.handle_key_event(key) {
             self.update_title(); //may have filtered
             return Some(EventResult::None);

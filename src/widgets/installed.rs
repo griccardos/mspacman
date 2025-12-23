@@ -1,5 +1,5 @@
-use crossterm::event::KeyCode;
 use ratatui::{
+    crossterm::event::{KeyCode, KeyEvent},
     layout::{Constraint, Layout, Rect},
     style::Color,
     widgets::Widget,
@@ -217,10 +217,11 @@ impl InstalledWidget {
         self.left.set_data(rows);
 
         //provides
-        if self.show_providing && pack.provides.is_none() {
-            if let Ok(prov) = get_provides(&pack.name) {
-                pack.provides = Some(prov);
-            }
+        if self.show_providing
+            && pack.provides.is_none()
+            && let Ok(prov) = get_provides(&pack.name)
+        {
+            pack.provides = Some(prov);
         }
         if let Some(prov) = pack.provides {
             let rows: Vec<TableRow> = prov
@@ -290,7 +291,7 @@ impl InstalledWidget {
         self.goto_package(&new_name);
     }
 
-    pub(crate) fn goto_package_by_name(&mut self, name: &String) {
+    pub(crate) fn goto_package_by_name(&mut self, name: &str) {
         self.goto_package(name);
     }
 }
@@ -310,7 +311,7 @@ impl Commands for InstalledWidget {
         ]
     }
 
-    fn handle_key_event(&mut self, _key: &crossterm::event::KeyEvent) -> Option<EventResult> {
+    fn handle_key_event(&mut self, _key: &KeyEvent) -> Option<EventResult> {
         let handled = match self.focus {
             FocusedTable::Left => self.left.handle_key_event(_key),
             FocusedTable::Centre => self.centre.handle_key_event(_key),

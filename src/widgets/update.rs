@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{layout::Constraint, style::Color, widgets::Widget};
 
 use crate::{

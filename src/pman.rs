@@ -67,7 +67,7 @@ pub fn run_command(state: &mut AppState, command: EventCommand) -> Result<(), Ap
     }
     std::io::stdout().write_all("\nPress enter to continue...".as_bytes())?;
     std::io::stdout().flush()?;
-    crossterm::event::read()?;
+    ratatui::crossterm::event::read()?;
 
     refresh_packages_and_update_tables(state)?;
 

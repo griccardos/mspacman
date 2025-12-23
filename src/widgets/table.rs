@@ -1,7 +1,7 @@
 use crate::utils::natural_cmp;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
+    crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
     layout::Constraint,
     style::{Color, Style, Stylize},
     text::Line,
