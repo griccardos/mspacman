@@ -164,6 +164,7 @@ pub fn get_packages_command(command: &str) -> Result<Vec<Package>, AppError> {
     let output = String::from_utf8(output.stdout)?;
     let mut packs: Vec<Package> = vec![];
     let mut pack = Package::default();
+    let mut in_dependencies_optional = false;
 
     for line in output.lines() {
         //if listing provides:
@@ -178,7 +179,6 @@ pub fn get_packages_command(command: &str) -> Result<Vec<Package>, AppError> {
             }
             continue;
         }
-
         let pair = line.split_once(':');
         if pair.is_none() {
             continue;
@@ -202,6 +202,9 @@ pub fn get_packages_command(command: &str) -> Result<Vec<Package>, AppError> {
                     .filter(|r| r != "None")
                     .collect()
             }
+            "Optional Deps" => {
+                //do further below
+            }
             "Required By" => {
                 pack.required_by = value
                     .split_whitespace()
@@ -210,7 +213,7 @@ pub fn get_packages_command(command: &str) -> Result<Vec<Package>, AppError> {
                     .collect()
             }
             "Optional For" => {
-                pack.optional_for = value
+                pack.required_by_optional = value
                     .split_whitespace()
                     .map(|s| s.to_string())
                     .filter(|r| r != "None")
@@ -228,6 +231,18 @@ pub fn get_packages_command(command: &str) -> Result<Vec<Package>, AppError> {
             "Description" => pack.description = value.to_string(),
             "Validated By" => pack.validated = value == "Signature",
             _ => {}
+        }
+        if key == "Optional Deps" {
+            in_dependencies_optional = true;
+        } else if !key.starts_with(" ") {
+            in_dependencies_optional = false;
+        }
+        if in_dependencies_optional {
+            if let Some(dep) = value.split(':').next() {
+                if dep != "None" {
+                    pack.dependencies_optional.push(dep.trim().to_string());
+                }
+            }
         }
     }
     packs.push(pack);

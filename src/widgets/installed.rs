@@ -83,7 +83,7 @@ impl InstalledWidget {
             .filter(|p| {
                 !self.filter_orphans
                     || p.required_by.is_empty()
-                        && p.optional_for.is_empty()
+                        && p.required_by_optional.is_empty()
                         && p.reason == Reason::Dependency
             }) //only show orphans
             .cloned()
@@ -139,18 +139,20 @@ impl InstalledWidget {
             format!("Filters: {}", filters.join(", "))
         };
 
-        let title = format!("Installed {count}{extra} {filters}");
+        let mut prev = String::new();
+        if let Some(p) = self.prev.last() {
+            prev = format!("Prev: {p}");
+        }
+
+        let title = format!("Installed {count}{extra} {filters} {prev}");
         self.centre.set_title(&title);
 
         self.update_dependency_tables();
     }
 
     fn cycle_focus_horiz(&mut self, arg: i32) {
-        let Some(pack) = self.current_package() else {
-            return;
-        };
-        let left_count = pack.dependencies.len();
-        let right_count = pack.required_by.len();
+        let left_count = self.left.rows().len();
+        let right_count = self.right.rows().len();
 
         self.change_focus(if arg > 0 {
             match self.focus {
@@ -188,16 +190,30 @@ impl InstalledWidget {
         };
         let mut pack = pack.clone();
         let count = pack.required_by.len();
-        let rows: Vec<TableRow> = pack
+        let count_optional = pack.required_by_optional.len();
+        let mut rows: Vec<TableRow> = pack
             .required_by
             .iter()
             .map(|dep| TableRow::new(vec![dep.clone()]))
             .collect();
+        let rows_optional = pack
+            .required_by_optional
+            .iter()
+            .map(|dep| TableRow::new(vec![dep.clone()]).with_highlight(Some(Color::Blue)));
+        rows.extend(rows_optional);
         self.right.set_data(rows);
-        self.right.set_title(&format!("Required by {count}"));
+        let optional = format!("(+{count_optional} optional)");
+        self.right.set_title(&format!(
+            "Required by {count} {}",
+            if count_optional > 0 {
+                optional
+            } else {
+                "".to_string()
+            },
+        ));
 
         //dependencies
-        let rows: Vec<TableRow> = pack
+        let mut rows: Vec<TableRow> = pack
             .dependencies
             .iter()
             .map(|dep| {
@@ -210,9 +226,25 @@ impl InstalledWidget {
                 TableRow::new(vec![dep.clone()]).with_highlight(col)
             })
             .collect();
-        let count = pack.dependencies.len();
+        let rows_optional: Vec<TableRow> = pack
+            .dependencies_optional
+            .iter()
+            .map(|dep| TableRow::new(vec![dep.clone()]).with_highlight(Some(Color::Blue)))
+            .collect();
 
-        let title = format!("Depends on {count}");
+        rows.extend(rows_optional);
+
+        let count = pack.dependencies.len();
+        let count_optional = pack.dependencies_optional.len();
+        let optional = format!("(+{count_optional} optional)");
+        let title = format!(
+            "Depends on {count} {}",
+            if count_optional > 0 {
+                optional
+            } else {
+                "".to_string()
+            }
+        );
         self.left.set_title(&title);
         self.left.set_data(rows);
 
@@ -282,7 +314,14 @@ impl InstalledWidget {
         let Some(new) = new else {
             return;
         };
+
         let new_name = new.cells[0].clone();
+
+        //check if it exists, else do nothing
+        if self.get_pack(&new_name).is_none() {
+            return;
+        }
+
         self.prev.push(
             self.current_package()
                 .map(|p| p.name.clone())
@@ -311,19 +350,19 @@ impl Commands for InstalledWidget {
         ]
     }
 
-    fn handle_key_event(&mut self, _key: &KeyEvent) -> Option<EventResult> {
+    fn handle_key_event(&mut self, key: &KeyEvent) -> Option<EventResult> {
         let handled = match self.focus {
-            FocusedTable::Left => self.left.handle_key_event(_key),
-            FocusedTable::Centre => self.centre.handle_key_event(_key),
-            FocusedTable::Right => self.right.handle_key_event(_key),
-            FocusedTable::Providing => self.provides.handle_key_event(_key),
+            FocusedTable::Left => self.left.handle_key_event(key),
+            FocusedTable::Centre => self.centre.handle_key_event(key),
+            FocusedTable::Right => self.right.handle_key_event(key),
+            FocusedTable::Providing => self.provides.handle_key_event(key),
         };
         if handled {
             self.filter_data(); //the filter may have changed what is currently selected, so we want to update that
             return Some(EventResult::None);
         }
 
-        match _key.code {
+        match key.code {
             KeyCode::Char('r') => {
                 let selected_names = self
                     .centre

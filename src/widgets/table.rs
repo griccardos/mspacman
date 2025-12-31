@@ -350,7 +350,7 @@ impl Widget for TableWidget {
         let (current_fg, current_bg) = match self.focus_type {
             TableFocus::Focused => (Color::Black, Color::Yellow),
             TableFocus::UnfocusedDimmed => (Color::Black, Color::DarkGray),
-            TableFocus::Unfocused => (Color::White, Color::Reset),
+            TableFocus::Unfocused => (Color::Reset, Color::Reset),
         };
 
         let selected_colour = match self.focus_type {
@@ -380,8 +380,19 @@ impl Widget for TableWidget {
             }),
             self.widths,
         )
-        .row_highlight_style(Style::new().bg(current_bg).fg(current_fg))
+        // .row_highlight_style(Style::new().bg(current_bg).fg(current_fg))
         .block(block);
+        if current_fg != Color::Reset || current_bg != Color::Reset {
+            let mut st = Style::new();
+            if current_fg != Color::Reset {
+                st = st.fg(current_fg);
+            }
+            if current_bg != Color::Reset {
+                st = st.bg(current_bg);
+            }
+            table = table.row_highlight_style(st);
+        }
+
         if !self.columns.is_empty() {
             table = table.header(
                 self.columns

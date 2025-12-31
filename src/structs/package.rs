@@ -4,8 +4,9 @@ use crate::{structs::reason::Reason, version::ChangeType};
 pub struct Package {
     pub name: String,
     pub required_by: Vec<String>,
-    pub optional_for: Vec<String>,
+    pub required_by_optional: Vec<String>,
     pub dependencies: Vec<String>,
+    pub dependencies_optional: Vec<String>,
     pub provides: Option<Vec<String>>,
     pub reason: Reason,
     //info
