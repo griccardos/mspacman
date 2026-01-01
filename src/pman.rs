@@ -237,12 +237,11 @@ pub fn get_packages_command(command: &str) -> Result<Vec<Package>, AppError> {
         } else if !key.starts_with(" ") {
             in_dependencies_optional = false;
         }
-        if in_dependencies_optional {
-            if let Some(dep) = value.split(':').next() {
-                if dep != "None" {
-                    pack.dependencies_optional.push(dep.trim().to_string());
-                }
-            }
+        if in_dependencies_optional
+            && let Some(dep) = value.split(':').next()
+            && dep != "None"
+        {
+            pack.dependencies_optional.push(dep.trim().to_string());
         }
     }
     packs.push(pack);
@@ -256,7 +255,55 @@ pub fn get_all_packages() -> Result<Vec<Package>, AppError> {
 }
 
 pub fn get_installed_packages() -> Result<Vec<Package>, AppError> {
-    get_packages_command("-Qi")
+    let mut installed = get_packages_command("-Qi")?;
+    //build full recursive tree. We want to know all dependencies, and dependencies of depencencies
+    let names = installed
+        .iter()
+        .map(|a| a.name.to_string())
+        .collect::<Vec<_>>();
+    let mut cache: HashMap<String, Vec<String>> = HashMap::new();
+    let mut current: HashSet<String> = HashSet::new();
+    for pack in &names {
+        let deps = get_dependents(pack, &installed, &mut cache, &mut current);
+        if let Some(p) = installed.iter_mut().find(|a| &a.name == pack) {
+            p.dependencies_count = deps.len();
+        }
+    }
+    Ok(installed)
+}
+
+fn get_dependents(
+    name: &str,
+    packages: &[Package],
+    cache: &mut HashMap<String, Vec<String>>,
+    current: &mut HashSet<String>, //to prevent loops
+) -> HashSet<String> {
+    let mut hs = HashSet::new();
+    if let Some(pack) = packages.iter().find(|a| a.name == name) {
+        for dep in &pack.dependencies {
+            hs.insert(dep.clone());
+            //check if in cache:
+            if let Some(cached) = cache.get(dep) {
+                for c in cached {
+                    hs.insert(c.clone());
+                }
+                continue;
+            }
+
+            //prevent loops
+            if current.contains(dep) {
+                continue;
+            }
+            current.insert(dep.clone());
+            let sub = get_dependents(dep, packages, cache, current);
+            // println!("{dep} has {} indirect: {sub:?}", sub.len());
+            cache.insert(dep.clone(), sub.iter().cloned().collect());
+            for s in sub {
+                hs.insert(s);
+            }
+        }
+    }
+    hs
 }
 
 pub fn get_updates() -> Result<Vec<PackageUpdate>, AppError> {

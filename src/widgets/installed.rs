@@ -45,13 +45,23 @@ impl Default for InstalledWidget {
             previous_focus: FocusedTable::Centre,
             left: TableWidget::new(&["Name"], vec![Constraint::Percentage(100)]).with_no_focus(),
             centre: TableWidget::new(
-                &["Name", "Reason", "ReqBy", "Foreign", "Installed"],
+                &[
+                    "Name",
+                    "Reason",
+                    "Deps",
+                    "ReqBy",
+                    "Deps∞",
+                    "For",
+                    "Installed",
+                ],
                 vec![
                     Constraint::Percentage(50),
                     Constraint::Percentage(15),
+                    Constraint::Min(6),
+                    Constraint::Min(7),
+                    Constraint::Min(8),
                     Constraint::Min(5),
-                    Constraint::Min(3),
-                    Constraint::Length(19),
+                    Constraint::Length(13),
                 ],
             ),
             right: TableWidget::new(&["Name"], vec![Constraint::Percentage(100)]).with_no_focus(),
@@ -99,9 +109,11 @@ impl InstalledWidget {
                 TableRow::new(vec![
                     pack.name.clone(),
                     format!("{:?}", pack.reason),
+                    pack.dependencies.len().to_string(),
                     pack.required_by.len().to_string(),
+                    pack.dependencies_count.to_string(),
                     format!("{}", if pack.validated { "" } else { "X" }),
-                    pack.installed.clone().expect("filtered installed only"),
+                    pack.installed.clone().expect("filtered installed only")[..11].to_string(),
                 ])
                 .with_highlight(highlighted)
             })
@@ -114,7 +126,7 @@ impl InstalledWidget {
             .centre
             .rows()
             .iter()
-            .filter(|p| p.cells[3].is_empty())
+            .filter(|p| p.cells[4].is_empty())
             .count();
         let foreign = count - local;
         let extra = if foreign > 0 {
