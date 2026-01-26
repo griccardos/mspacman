@@ -126,11 +126,17 @@ impl InstalledWidget {
             .centre
             .rows()
             .iter()
-            .filter(|p| p.cells[4].is_empty())
+            .filter(|p| p.cells[5].is_empty())
             .count();
         let foreign = count - local;
+        let explicit = self
+            .centre
+            .rows()
+            .iter()
+            .filter(|a| a.cells[1] == "Explicit")
+            .count();
         let extra = if foreign > 0 {
-            format!(" ({local} pacman, {foreign} foreign)")
+            format!(" ({local} pacman, {foreign} foreign) {explicit} explicit")
         } else {
             "".to_string()
         };
