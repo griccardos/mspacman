@@ -187,6 +187,10 @@ fn handle_event(state: &mut AppState) -> Result<EventResult, AppError> {
                     state.tab.cycle_next();
                     return Ok(EventResult::None);
                 }
+                KeyCode::BackTab => {
+                    state.tab.cycle_prev();
+                    return Ok(EventResult::None);
+                }
                 KeyCode::Char('s') => {
                     return Ok(EventResult::Command(EventCommand::SyncDatabase));
                 }
