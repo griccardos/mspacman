@@ -117,7 +117,7 @@ impl TableWidget {
             KeyCode::PageUp => self.safe_move(-10),
             KeyCode::PageDown => self.safe_move(10),
             KeyCode::Char(c) if c.is_numeric() => {
-                let index = c.to_digit(10).unwrap() as usize - 1;
+                let index = (c.to_digit(10).unwrap() as usize).saturating_sub(1);
                 self.set_sort(index);
                 self.do_sort();
             }
