@@ -313,8 +313,8 @@ fn draw_help(state: &mut AppState, f: &mut Frame) -> Result<(), Box<dyn Error>> 
     let block_height = commands.len() as u16 + 2;
 
     // Calculate the block position (centered)
-    let block_x = (size.width - block_width) / 2;
-    let block_y = (size.height - block_height) / 2;
+    let block_x = size.width.saturating_sub(block_width) / 2;
+    let block_y = size.height.saturating_sub(block_height) / 2;
 
     // Create a centered block
     let block = Block::default()

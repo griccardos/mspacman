@@ -1,6 +1,7 @@
 use ratatui::{
     crossterm::event::{KeyCode, KeyEvent},
     layout::{Constraint, Layout, Rect},
+    macros::text,
     style::Color,
     widgets::Widget,
 };
@@ -421,11 +422,7 @@ impl Widget for InstalledWidget {
         } else {
             0
         };
-        let verti = Layout::vertical(vec![
-            Constraint::Percentage(100 - pr),
-            Constraint::Length(pr),
-        ])
-        .split(area);
+        let verti = Layout::vertical(vec![Constraint::Min(5), Constraint::Length(pr)]).split(area);
         let areas = Layout::horizontal(vec![
             Constraint::Percentage(20),
             Constraint::Percentage(60),

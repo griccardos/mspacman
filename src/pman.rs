@@ -111,6 +111,9 @@ pub fn combine_packages(
 
 pub fn get_provides(pack_name: &str) -> Result<Vec<String>, AppError> {
     let output = Command::new("pacman").arg("-Ql").arg(pack_name).output()?;
+    if !output.status.success() {
+        return Err(AppError::CommandNonZero(output.status.code()));
+    }
     let output = String::from_utf8(output.stdout)?;
     let vals = output
         .lines()
@@ -128,6 +131,10 @@ pub fn get_update_size() -> Result<HashMap<String, usize>, AppError> {
     let output = Command::new("pacman")
         .args(["-Su", "--print-format", "%n,%s"])
         .output()?;
+
+    if !output.status.success() {
+        return Err(AppError::CommandNonZero(output.status.code()));
+    }
     let output = String::from_utf8(output.stdout)?;
     let vals = output
         .lines()
@@ -161,6 +168,9 @@ pub fn get_packages_command(command: &str) -> Result<Vec<Package>, AppError> {
         .env("LC_TIME", "C")
         .arg(command)
         .output()?;
+    if !output.status.success() {
+        return Err(AppError::CommandNonZero(output.status.code()));
+    }
     let output = String::from_utf8(output.stdout)?;
     let mut packs: Vec<Package> = vec![];
     let mut pack = Package::default();
@@ -227,7 +237,7 @@ pub fn get_packages_command(command: &str) -> Result<Vec<Package>, AppError> {
                     _ => Reason::Other(value.to_string()),
                 }
             }
-            "Install Date" => pack.installed = Some(to_date(value)),
+            "Install Date" => pack.installed = to_date(value).ok(),
             "Description" => pack.description = value.to_string(),
             "Validated By" => pack.validated = value == "Signature",
             _ => {}
@@ -244,7 +254,9 @@ pub fn get_packages_command(command: &str) -> Result<Vec<Package>, AppError> {
             pack.dependencies_optional.push(dep.trim().to_string());
         }
     }
-    packs.push(pack);
+    if !pack.name.is_empty() {
+        packs.push(pack);
+    }
 
     Ok(packs)
 }
@@ -311,6 +323,9 @@ pub fn get_updates() -> Result<Vec<PackageUpdate>, AppError> {
         .env("LC_TIME", "C")
         .arg("-Qu")
         .output()?;
+    if !output.status.success() {
+        return Err(AppError::CommandNonZero(output.status.code()));
+    }
     let output = String::from_utf8(output.stdout)?;
     let mut updates: Vec<PackageUpdate> = vec![];
     for line in output.lines() {
@@ -331,11 +346,8 @@ pub fn get_updates() -> Result<Vec<PackageUpdate>, AppError> {
     Ok(updates)
 }
 
-pub fn to_date(value: &str) -> String {
+pub fn to_date(value: &str) -> Result<String, AppError> {
     //get rid of the timezone
-    let time = match jiff::fmt::strtime::parse("%a %b %e %H:%M:%S %Y", value) {
-        Ok(time) => time,
-        Err(e) => panic!("Could not parse '{value}': {e}"),
-    };
-    time.to_datetime().unwrap().to_string().replace("T", " ")
+    let time = jiff::fmt::strtime::parse("%a %b %e %H:%M:%S %Y", value)?;
+    Ok(time.to_datetime()?.to_string().replace("T", " "))
 }
